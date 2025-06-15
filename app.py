@@ -5,34 +5,48 @@ import json
 import zipfile
 import logging
 from datetime import datetime
-from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory, send_file, abort, flash
+from flask import (
+    Flask, render_template_string, request, redirect, url_for,
+    session, send_from_directory, send_file, abort, flash
+)
 from werkzeug.utils import secure_filename
 
 # ----------------------------------------
-# Configuration de base
+# Configuration de base et chemins persistants
+# ----------------------------------------
+
+# Variables d'environnement facultatives pour personnaliser les chemins persistants
+UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "uploads")
+MSG_FILE = os.environ.get("MSG_FILE_PATH", os.path.join(UPLOAD_FOLDER, "messages.json"))
+TRAFFIC_FILE = os.environ.get("TRAFFIC_FILE_PATH", os.path.join(UPLOAD_FOLDER, "traffic.json"))
+ROTATOR_FILE = os.environ.get("ROTATOR_FILE_PATH", os.path.join(UPLOAD_FOLDER, "rotator.json"))
+CONFIG_FILE = os.environ.get("CONFIG_FILE_PATH", os.path.join(UPLOAD_FOLDER, "config.json"))
+
+# Créer le dossier d'uploads s'il n'existe pas
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# S'assurer que les répertoires contenant les fichiers JSON existent
+for path in [MSG_FILE, TRAFFIC_FILE, ROTATOR_FILE, CONFIG_FILE]:
+    parent = os.path.dirname(path)
+    if parent and not os.path.exists(parent):
+        os.makedirs(parent, exist_ok=True)
+
+# Extensions autorisées pour upload
+ALLOWED_EXTENSIONS = {"pdf", "dwg", "rvt", "docx", "xlsx", "jpg", "jpeg", "png", "gif", "zip"}
+IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif"}
+PDF_EXTENSIONS = {"pdf"}
+
+# Taille maximale pour upload (optionnel) : ici pas défini, mais tu peux configurer via Flask config si souhaité
+# app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # ex. 16 MB
+
+# ----------------------------------------
+# Configuration Flask et logs
 # ----------------------------------------
 app = Flask(__name__)
 # En production, définir SECRET_KEY via variable d'environnement pour sécurité
 app.secret_key = os.environ.get("SECRET_KEY", "super_secret_key_2024")
 
-# Dossier des uploads
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-# Fichiers de persistance
-MSG_FILE = "messages.json"
-TRAFFIC_FILE = "traffic.json"
-ROTATOR_FILE = "rotator.json"  # Pour stocker la liste des fichiers du carousel
-
-# Autorisations d'extensions upload (images et PDF pour le carousel, plus autres pour contact)
-ALLOWED_EXTENSIONS = {"pdf", "dwg", "rvt", "docx", "xlsx", "jpg", "jpeg", "png", "gif", "zip"}
-
-# Définit parmi ALLOWED_EXTENSIONS celles qu'on considère comme images pour carousel
-IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif"}
-PDF_EXTENSIONS = {"pdf"}
-
 # Fichier de logs
-LOG_FILE = "app.log"
+LOG_FILE = os.environ.get("LOG_FILE_PATH", "app.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -42,47 +56,90 @@ logging.basicConfig(
     ]
 )
 
+# ----------------------------------------
+# Fonctions utilitaires
+# ----------------------------------------
 def allowed_file(filename):
+    """Vérifie l'extension autorisée pour upload."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# ----------------------------------------
-# Chargement / sauvegarde JSON
-# ----------------------------------------
 def load_json_file(path):
-    """Charge un JSON comme liste, ou retourne [] si échec."""
+    """
+    Charge un JSON. Retourne dict ou list selon le contenu, ou initialise s'il n'existe pas ou erreur.
+    - Si c'est config (config.json), on attend un dict.
+    - Pour les autres (messages, traffic, rotator), on attend une list.
+    """
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, list):
-                    return data
-                logging.warning(f"{path} ne contient pas une liste, réinitialisation.")
+                # On ne valide pas strictement la structure, mais on réinitialise si type inattendu
+                if path.endswith("config.json"):
+                    if isinstance(data, dict):
+                        return data
+                    else:
+                        logging.warning(f"{path} n'est pas un dict JSON, réinitialisation.")
+                else:
+                    if isinstance(data, list):
+                        return data
+                    else:
+                        logging.warning(f"{path} ne contient pas une liste JSON, réinitialisation.")
         except Exception as e:
-            logging.error(f"Erreur lecture {path}: {e}")
-    return []
+            logging.error(f"Erreur lecture {path}: {e}. Réinitialisation.")
+    # Initialisation
+    default = {} if path.endswith("config.json") else []
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(default, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logging.error(f"Erreur création initiale de {path}: {e}")
+    return default
 
 def save_json_file(path, data):
-    """Sauvegarde la liste data dans le fichier JSON."""
+    """Sauvegarde data (dict ou list) dans JSON, avec indentation pour lisibilité."""
     try:
+        parent = os.path.dirname(path)
+        if parent and not os.path.exists(parent):
+            os.makedirs(parent, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
         logging.error(f"Erreur écriture {path}: {e}")
 
-# Charger les données persistantes au démarrage
+# ----------------------------------------
+# Chargement persistant au démarrage
+# ----------------------------------------
+# Messages reçus via formulaire
 MSGS = load_json_file(MSG_FILE)
-# Assurer champ status et timestamp si manquants
-for m in MSGS:
-    if 'status' not in m:
-        m['status'] = 'new'
-    if 'timestamp' not in m:
-        m['timestamp'] = ""
+if isinstance(MSGS, list):
+    for m in MSGS:
+        if 'status' not in m: m['status'] = 'new'
+        if 'timestamp' not in m: m['timestamp'] = ""
+else:
+    MSGS = []
 
+# Traffic logs
 TRAFFIC = load_json_file(TRAFFIC_FILE)
+if not isinstance(TRAFFIC, list):
+    TRAFFIC = []
 
-# Charger la liste du carousel (rotator)
+# Carousel items
 ROTATOR_ITEMS = load_json_file(ROTATOR_FILE)
-# Chaque élément de ROTATOR_ITEMS est un dict: {"filename": "...", "type": "image" ou "pdf"}
+if not isinstance(ROTATOR_ITEMS, list):
+    ROTATOR_ITEMS = []
+
+# Configuration thème (couleur, font, photo)
+config_theme = load_json_file(CONFIG_FILE)
+# Valeurs par défaut si absentes
+default_color = "#1f87e0"
+default_font = "Montserrat"
+# Pour la photo de profil, on peut avoir :
+# - une URL externe (commençant par http:// ou https://)
+# - ou un chemin relatif vers uploads, p.ex. "/uploads/filename.jpg"
+default_photo = "https://randomuser.me/api/portraits/men/75.jpg"
+theme_color = config_theme.get("couleur", default_color)
+theme_font = config_theme.get("font", default_font)
+theme_photo = config_theme.get("photo", default_photo)
 
 # ----------------------------------------
 # Données dynamiques du site
@@ -95,10 +152,11 @@ SITE = {
     },
     "slogan": {
         "fr": "Vous avez un projet ? Confiez-le à un professionnel passionné.",
-        "en": "Have a project? Entrust it to a passionate professional."
+        "en": "Have a project? Entrust it to a passionate expert."
     },
-    "photo": "https://randomuser.me/api/portraits/men/75.jpg",
-    "email": "entreprise2rc@gmail.com",  # Toujours stocké, mais non utilisé pour SMTP
+    # Photo de profil : si URL externe, on utilise directement ; si chemin relatif (ex. "/uploads/xxx.jpg"), il faut que la route /uploads/<filename> serve le fichier
+    "photo": theme_photo,
+    "email": "entreprise2rc@gmail.com",
     "tel": "+227 96 38 08 77",
     "whatsapp": "+227 96 38 08 77",
     "linkedin": "https://www.linkedin.com/in/issoufou-chefou",
@@ -107,14 +165,15 @@ SITE = {
         "en": "Niamey, Niger (available internationally)"
     },
     "horaires": {
-        "fr": "Lundi-Samedi : 8h – 19h (GMT+1)",
+        "fr": "Lundi–Samedi : 8h – 19h (GMT+1)",
         "en": "Monday–Saturday: 8AM – 7PM (GMT+1)"
     },
-    "couleur": "#1f87e0",
-    "font": "Montserrat"
+    "couleur": theme_color,
+    "font": theme_font
 }
 ANNEE = 2025
 
+# Exemple de services, portfolio, atouts (à personnaliser selon besoin)
 SERVICES = [
     {"titre": {"fr": "Plans d’armatures Revit", "en": "Rebar plans (Revit)"},
      "desc": {"fr": "Plans d’armatures clairs et complets pour béton armé.",
@@ -168,24 +227,19 @@ ATOUTS = [
 # ----------------------------------------
 # Configuration admin
 # ----------------------------------------
-ADMIN_USER = "bacseried@gmail.com"
-ADMIN_PASS = "mx23fy"
-ADMIN_SECRET_URL = "issoufouachraf_2025"  # À adapter si nécessaire
+ADMIN_USER = os.environ.get("ADMIN_USER", "bacseried@gmail.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "mx23fy")
+ADMIN_SECRET_URL = os.environ.get("ADMIN_SECRET_URL", "issoufouachraf_2025")
 LANGS = {"fr": "Français", "en": "English"}
 
-# ----------------------------------------
-# Fonction stub pour notification (sans SMTP)
-# ----------------------------------------
 def send_email_notification(subject: str, body: str):
-    """
-    Stub: ne fait que logger. Ne tente plus d'envoyer d'email.
-    """
+    """Stub: enregistre seulement dans les logs."""
     logging.info(f"[Notification stub] Sujet: {subject} | Corps: {body}")
-    # Pas d'envoi SMTP
 
 # ----------------------------------------
 # Template HTML de base (BASE)
 # ----------------------------------------
+# On inclut ici CSS/JS Bootstrap, Google Fonts dynamiques, et styles personnalisés pour rendre le site plus attrayant :
 BASE = """
 <!DOCTYPE html>
 <html lang="{{ lang }}">
@@ -195,142 +249,248 @@ BASE = """
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Google Font -->
-    <link href="https://fonts.googleapis.com/css2?family={{ site.font|replace(' ','+') }}:wght@700;500;400&display=swap" rel="stylesheet">
+    <!-- Google Font dynamique -->
+    <link href="https://fonts.googleapis.com/css2?family={{ site.font|replace(' ','+') }}:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <style>
+        /* Variables CSS dynamiques */
+        :root {
+            --primary-color: {{ site.couleur }};
+            --font-family: '{{ site.font }}', Arial, sans-serif;
+        }
         html { font-size: 17px; scroll-behavior: smooth; }
         body {
-            font-family: '{{ site.font }}', Arial, sans-serif;
+            font-family: var(--font-family);
             background: {% if session.get('dark_mode') %}#121212{% else %}#f6faff{% endif %};
             color: {% if session.get('dark_mode') %}#e0e0e0{% else %}#212529{% endif %};
             margin: 0; padding: 0;
+            transition: background 0.3s, color 0.3s;
         }
-        a { color: {% if session.get('dark_mode') %}#66b2ff{% else %}#1f87e0{% endif %}; }
-        .navbar, .footer { transition: background 0.3s; }
+        a {
+            color: var(--primary-color);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        a:hover {
+            color: darken(var(--primary-color), 10%) !important;
+            text-decoration: underline;
+        }
         /* Navbar */
-        .navbar { background: linear-gradient(90deg,{{ site.couleur }},#43e3ff 100%); }
+        .navbar {
+            background: linear-gradient(90deg, var(--primary-color), #43e3ff 100%);
+            transition: background 0.3s;
+        }
         .navbar-brand, .nav-link { color: #fff !important; }
-        .nav-link.active { color:#ffd600!important; font-weight:bold; }
+        .nav-link.active { color: #ffd600!important; font-weight:bold; }
         .lang-select { margin-left:1.1em; }
         .dark-toggle { cursor: pointer; color: #fff; margin-left: 1rem; }
-        /* Hero / Carousel */
+
+        /* Hero avec image de profil ou background léger */
         .hero {
             position: relative;
             text-align: center;
             color: #fff;
+            padding: 60px 0;
+            background: 
+                linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)),
+                url('{{ site.photo }}') center/cover no-repeat;
         }
         .hero img {
-            width: 140px; border-radius: 100px; margin-bottom: 15px;
-            border: 3px solid #ffd600; box-shadow:0 4px 16px #0008;
+            width: 140px; height:140px; object-fit:cover;
+            border-radius: 50%;
+            border: 3px solid #ffd600;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+            transition: transform 0.3s;
         }
-        /* Pour carousel: on limitera la taille des images/PDF */
+        .hero img:hover {
+            transform: scale(1.05);
+        }
+        .hero h1, .hero h3, .hero p {
+            text-shadow: 1px 1px 6px rgba(0,0,0,0.7);
+            margin: 10px 0;
+        }
+        .hero .btn-contact {
+            border-radius: 30px;
+            padding: 12px 30px;
+            font-size: 1.1rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .hero .btn-contact:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+        }
+
+        /* Carousel d'accueil */
         .carousel-item {
             text-align: center;
         }
         .carousel-item img {
-            /* Taille moyenne : on fixe hauteur max et largeur auto, centré */
             max-height: 400px;
             width: auto;
             margin-left: auto;
             margin-right: auto;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transition: transform 0.3s;
+        }
+        .carousel-item img:hover {
+            transform: scale(1.02);
         }
         .carousel-item .pdf-embed {
-            /* Embed PDF centré, taille modérée */
             max-width: 80%;
             height: 400px;
             margin-left: auto;
             margin-right: auto;
+            border: 1px solid #ccc;
+            border-radius: 8px;
         }
         .carousel-caption {
             background: rgba(0,0,0,0.4);
             border-radius: 10px;
             padding: 10px;
         }
+
+        /* Boutons globaux */
         .btn-contact, .btn-projet, .btn-admin {
-            background: #ffd600; color: #24315e; font-weight:bold; border-radius:13px;
-            transition: transform 0.2s, background 0.2s;
+            background: var(--primary-color);
+            color: #fff;
+            font-weight: 500;
+            border-radius: 25px;
+            transition: background 0.2s, transform 0.2s;
         }
         .btn-contact:hover, .btn-projet:hover, .btn-admin:hover {
-            background: #fff200; transform: translateY(-2px);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
+
         /* Section titles */
         .section-title {
-            color: {{ site.couleur }}; margin-top:26px; margin-bottom:18px; font-weight:bold; letter-spacing:0.5px;
-            position: relative; display: inline-block;
+            color: var(--primary-color);
+            margin-top: 32px;
+            margin-bottom: 24px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            position: relative;
+            display: inline-block;
         }
         .section-title::after {
-            content: ""; display: block; width: 50px; height: 3px;
-            background: {{ site.couleur }}; margin: 8px auto 0; border-radius: 2px;
+            content: "";
+            display: block;
+            width: 60px;
+            height: 3px;
+            background: var(--primary-color);
+            margin: 8px auto 0;
+            border-radius: 2px;
         }
+
         /* Service cards */
         .service-card {
             background: {% if session.get('dark_mode') %}#1e1e1e{% else %}#fff{% endif %};
-            border-radius:19px; box-shadow:0 1px 12px #24315e1c;
-            padding:23px 13px; text-align:center; margin-bottom:18px;
+            border-radius:20px;
+            padding:24px 16px;
+            text-align:center;
+            margin-bottom:20px;
+            box-shadow:0 2px 14px rgba(0,0,0,0.1);
             transition: transform 0.3s, box-shadow 0.3s;
         }
         .service-card:hover {
-            transform: translateY(-5px); box-shadow:0 4px 20px rgba(0,0,0,0.2);
+            transform: translateY(-6px);
+            box-shadow:0 6px 24px rgba(0,0,0,0.15);
         }
         .service-card i {
-            font-size:2.2rem; color:{{ site.couleur }}; margin-bottom:9px;
+            font-size:2.4rem;
+            color: var(--primary-color);
+            margin-bottom:12px;
         }
+
         /* Portfolio cards */
         .card-portfolio {
-            border: none; border-radius: 15px; overflow: hidden;
+            border: none;
+            border-radius: 15px;
+            overflow: hidden;
             transition: transform 0.3s, box-shadow 0.3s;
             background: {% if session.get('dark_mode') %}#1e1e1e{% else %}#fff{% endif %};
             color: {% if session.get('dark_mode') %}#e0e0e0{% else %}#212529{% endif %};
+            box-shadow:0 2px 12px rgba(0,0,0,0.1);
         }
         .card-portfolio:hover {
-            transform: translateY(-5px); box-shadow:0 4px 20px rgba(0,0,0,0.2);
+            transform: translateY(-6px);
+            box-shadow:0 8px 28px rgba(0,0,0,0.2);
         }
         .portfolio-img-multi {
-            height:65px; width:85px; object-fit:cover;
-            margin-right:7px; margin-bottom:4px; border-radius:7px; border:2px solid #eee;
+            height:70px; width:90px; object-fit:cover;
+            margin-right:8px; margin-bottom:6px; border-radius:8px; border:2px solid #eee;
+            transition: transform 0.2s;
         }
+        .portfolio-img-multi:hover {
+            transform: scale(1.05);
+        }
+
         /* Footer */
         .footer { background: #222c41; color: #fff; padding: 30px 0; margin-top: 0; }
         .footer a { color: #ffd600; text-decoration: none; }
         .footer a:hover { text-decoration: underline; }
+
         .project-cta {
-            background: linear-gradient(90deg,{{ site.couleur }} 60%, #ffd600 120%);
-            color:#24315e; border-radius:16px; padding:23px 10px; margin:27px 0 7px 0;
-            box-shadow:0 2px 15px #0288d122; font-size:1.08rem; font-weight:500; text-align: center;
+            background: linear-gradient(90deg,var(--primary-color) 60%, #ffd600 120%);
+            color:#24315e;
+            border-radius:20px;
+            padding:25px 15px;
+            margin:30px 0 15px 0;
+            box-shadow:0 4px 16px rgba(0,0,0,0.15);
+            font-size:1.1rem;
+            font-weight:500;
+            text-align: center;
         }
+
         /* Admin panel */
-        .admin-nav { background:#22223b; padding:10px; border-radius:10px; margin-bottom:10px; }
+        .admin-nav { background:#2c2f33; padding:10px; border-radius:10px; margin-bottom:10px; }
         .admin-nav a { color:#ffd600; margin:0 8px; font-weight:bold; }
         .admin-panel {
             background:{% if session.get('dark_mode') %}#1e1e1e{% else %}#fff{% endif %};
-            border-radius:14px; padding:17px 8px; margin-top:10px;
-            box-shadow:0 3px 30px #0288d116;
+            border-radius:14px;
+            padding:20px 16px;
+            margin-top:10px;
+            box-shadow:0 4px 24px rgba(0,0,0,0.1);
             color: {% if session.get('dark_mode') %}#e0e0e0{% else %}#212529{% endif %};
         }
         .admin-table td, .admin-table th { vertical-align:middle; color: inherit; }
-        .admin-msg { background:#fffae0; border:1px solid #ffd600; border-radius:8px; padding:10px 16px; }
+        .admin-msg { background:#fffae0; border:1px solid var(--primary-color); border-radius:8px; padding:12px 18px; }
+
         /* Contact form drag-drop */
         .drag-drop-area {
-            border:2px dashed #bbb; border-radius:10px; background:#f8fbff;
-            text-align:center; padding:17px 5px; color:#789; margin-bottom:10px;
+            border:2px dashed #bbb;
+            border-radius:10px;
+            background:#f8fbff;
+            text-align:center;
+            padding:20px 8px;
+            color:#789;
+            margin-bottom:12px;
             transition: border .2s, background .2s;
         }
-        .drag-drop-area.dragover { border:2.2px solid {{ site.couleur }}; background:#e7f7ff; }
+        .drag-drop-area.dragover { border:2.2px solid var(--primary-color); background:#e7f7ff; }
+
         /* Table warning for unread */
         .table-warning { background-color: #fff3cd !important; }
+
         @media (max-width:600px) {
             html { font-size:15px; }
             .hero, .carousel { padding: 40px 0 30px 0; }
-            .project-cta { padding:7px 3px; }
-            .admin-panel { padding:7px 1px; }
-            /* Pour mobile, réduire hauteur carousel */
+            .project-cta { padding:10px 5px; }
+            .admin-panel { padding:10px 8px; }
             .carousel-item img, .carousel-item .pdf-embed {
                 max-height: 250px;
                 height: auto;
             }
+            .hero img { width: 100px; height:100px; }
         }
+
+        /* Petite fonction CSS pour assombrir la couleur (darken) */
+        /* Note: Bootstrap n'a pas de fonction darken native dans CSS pur; 
+           Mais certains navigateurs peuvent interpréter color-mod ou filter. 
+           Pour simplicité, dans ce template, les hover plus sombres ne sont pas strictement calculés ici. */
     </style>
 </head>
 <body>
@@ -404,7 +564,7 @@ BASE = """
 <!-- Bootstrap JS et dépendances -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// Gestion du drag & drop simplifié pour le formulaire contact
+// Gestion drag & drop pour contact
 const dropArea = document.getElementById('dragDrop');
 if (dropArea) {
   dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.classList.add('dragover'); });
@@ -437,7 +597,7 @@ if (dropArea) {
 """
 
 # ----------------------------------------
-# Fonctions utilitaires Flask
+# Fonctions Flask utilitaires
 # ----------------------------------------
 def get_lang():
     lang = session.get('lang', 'fr')
@@ -446,17 +606,16 @@ def get_lang():
     return lang
 
 def render(content, **kwargs):
+    """Rendu du template de base en injectant SITE, annee, lang, etc."""
     lang = get_lang()
     ctx = dict(site=SITE, annee=ANNEE, lang=lang, langs=LANGS, **kwargs)
+    # Insérer content à la place du block content
     page = BASE.replace("{% block content %}{% endblock %}", content)
     return render_template_string(page, **ctx)
 
 def admin_logged_in():
     return session.get("admin") is True
 
-# ----------------------------------------
-# Route toggle dark mode
-# ----------------------------------------
 @app.route('/toggle_dark')
 def toggle_dark():
     current = session.get('dark_mode', False)
@@ -464,15 +623,10 @@ def toggle_dark():
     ref = request.referrer or url_for('index')
     return redirect(ref)
 
-# ----------------------------------------
-# Traçage du trafic : before_request
-# ----------------------------------------
 @app.before_request
 def log_traffic():
     path = request.path or ""
-    ignore_prefixes = [
-        f"/{ADMIN_SECRET_URL}", "/static", "/favicon.ico", "/sitemap.xml"
-    ]
+    ignore_prefixes = [f"/{ADMIN_SECRET_URL}", "/static", "/favicon.ico", "/sitemap.xml"]
     if any(path.startswith(pref) for pref in ignore_prefixes):
         return
     if request.method in ("GET", "POST"):
@@ -498,10 +652,9 @@ def set_lang():
 @app.route('/')
 def index():
     lang = get_lang()
-    # Construire la partie carousel si ROTATOR_ITEMS non vide
     carousel_content = ""
     if ROTATOR_ITEMS:
-        # Bootstrap carousel avec intervalle automatique (p.ex. 5000ms)
+        # Construire carousel Bootstrap
         carousel_content += """
         <div id="homepageCarousel" class="carousel slide mb-4" data-bs-ride="carousel" data-bs-interval="5000">
           <div class="carousel-indicators">
@@ -518,10 +671,8 @@ def index():
             file_url = url_for('uploaded_file', filename=filename)
             carousel_content += f'<div class="carousel-item {active}">'
             if ftype == "image":
-                # Afficher l'image en taille moyenne, centrée
                 carousel_content += f'<img src="{file_url}" class="d-block" alt="Carousel image {idx+1}">'
             elif ftype == "pdf":
-                # Afficher un embed PDF dans taille modérée
                 carousel_content += f'''
                 <div class="d-flex justify-content-center">
                   <object data="{file_url}" type="application/pdf" class="pdf-embed">
@@ -542,7 +693,6 @@ def index():
           </button>
         </div>
         """
-    # Contenu principal de la page
     content = f"""
     {carousel_content}
     <div class="hero text-center">
@@ -633,14 +783,13 @@ def pourquoi():
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
-    # Sert les fichiers uploadés (images, pdf, etc.)
+    """Serve les fichiers uploadés (images, pdf, etc.)."""
     return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
 
 @app.route('/contact', methods=['GET', 'POST'])
 def contact():
     lang = get_lang()
     if request.method == "POST":
-        # Honeypot anti-spam
         honeypot = request.form.get("website", "")
         if honeypot:
             logging.warning("Spam détecté via honeypot, formulaire ignoré.")
@@ -653,8 +802,10 @@ def contact():
         files = request.files.getlist("fichier")
         for file in files:
             if file and allowed_file(file.filename):
+                # Générer un nom de fichier sécurisé avec timestamp
                 filename = secure_filename(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}")
-                file.save(os.path.join(UPLOAD_FOLDER, filename))
+                save_path = os.path.join(UPLOAD_FOLDER, filename)
+                file.save(save_path)
                 fichiers.append(filename)
         new_msg = {
             "nom": nom,
@@ -666,7 +817,7 @@ def contact():
         }
         MSGS.append(new_msg)
         save_json_file(MSG_FILE, MSGS)
-        # Notification stub (log uniquement)
+        # Notification stub
         subject = f"Nouveau message de {nom}"
         body = f"Nom: {nom}\nEmail: {email}\nProjet: {projet}\nTimestamp: {new_msg['timestamp']}\nFichiers: {', '.join(fichiers) if fichiers else 'aucun'}"
         send_email_notification(subject, body)
@@ -756,11 +907,12 @@ def admin():
       <a href="{{ url_for('admin') }}">Accueil admin</a> |
       <a href="{{ url_for('admin_services') }}">Services</a> |
       <a href="{{ url_for('admin_portfolio') }}">Portfolio</a> |
-      <a href="{{ url_for('admin_atouts') }}">Pourquoi moi</a> |
-      <a href="{{ url_for('admin_messages') }}">Messages reçus{% if unread_msgs>0 %} ({{ unread_msgs }}){% endif %}</a> |
-      <a href="{{ url_for('admin_carousel') }}">Tour de rôle ({{ total_rotator }})</a> |
+      <a href="{{ url_for('admin_atouts') }}">Atouts</a> |
+      <a href="{{ url_for('admin_messages') }}">Messages{% if unread_msgs>0 %} ({{ unread_msgs }}){% endif %}</a> |
+      <a href="{{ url_for('admin_carousel') }}">Carousel ({{ total_rotator }})</a> |
       <a href="{{ url_for('admin_analytics') }}">Analytics</a> |
       <a href="{{ url_for('admin_traffic') }}">Traffic</a> |
+      <a href="{{ url_for('admin_settings') }}">Paramètres</a> |
       <a href="{{ url_for('download_all_uploads') }}">Télécharger Uploads</a> |
       <a href="{{ url_for('admin_logout') }}">Déconnexion</a>
     </div>
@@ -773,7 +925,7 @@ def admin():
         <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_msgs }}</h5><p>Messages ({{ unread_msgs }} non lus)</p></div></div></div>
       </div>
       <p><strong>Visites totales :</strong> {{ total_traffic }}, <strong>Aujourd'hui :</strong> {{ visits_today }}</p>
-      <p><strong>Items Tour de rôle :</strong> {{ total_rotator }} (max 6)</p>
+      <p><strong>Items Carousel :</strong> {{ total_rotator }} (max 6)</p>
     </div>
     """
     return render(content,
@@ -794,14 +946,13 @@ def admin_logout():
     flash("Déconnecté.", "info")
     return redirect(url_for('admin'))
 
-# --- Gestion des services via admin (CRUD complet) ---
+# --- Gestion des services via admin ---
 @app.route(f'/{ADMIN_SECRET_URL}/services', methods=["GET", "POST"])
 def admin_services():
     if not admin_logged_in():
         flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     edit_idx = request.args.get("edit")
-    # POST: création ou mise à jour
     if request.method == "POST":
         titre_fr = request.form.get("titre_fr", "").strip()
         titre_en = request.form.get("titre_en", "").strip()
@@ -809,7 +960,7 @@ def admin_services():
         desc_en = request.form.get("desc_en", "").strip()
         icon = request.form.get("icon", "").strip() or "bi-star"
         if titre_fr and titre_en and desc_fr and desc_en:
-            if request.form.get("edit_idx") is not None and request.form.get("edit_idx").isdigit():
+            if request.form.get("edit_idx") and request.form.get("edit_idx").isdigit():
                 idx = int(request.form.get("edit_idx"))
                 if 0 <= idx < len(SERVICES):
                     SERVICES[idx] = {
@@ -819,7 +970,7 @@ def admin_services():
                     }
                     flash("Service mis à jour.", "success")
                 else:
-                    flash("Index de service invalide.", "danger")
+                    flash("Index invalide.", "danger")
             else:
                 SERVICES.append({
                     "titre": {"fr": titre_fr, "en": titre_en},
@@ -830,7 +981,6 @@ def admin_services():
         else:
             flash("Tous les champs sont requis.", "warning")
         return redirect(url_for('admin_services'))
-    # Suppression
     delid = request.args.get("del")
     if delid and delid.isdigit():
         idx = int(delid)
@@ -840,7 +990,6 @@ def admin_services():
         else:
             flash("Index invalide pour suppression.", "danger")
         return redirect(url_for('admin_services'))
-    # Pré-remplir si édition
     service_to_edit = None
     if edit_idx and edit_idx.isdigit():
         idx = int(edit_idx)
@@ -895,7 +1044,7 @@ def admin_services():
     """
     return render(content, services=SERVICES, service_to_edit=service_to_edit)
 
-# --- Gestion du portfolio via admin (CRUD complet) ---
+# --- Gestion du portfolio via admin ---
 @app.route(f'/{ADMIN_SECRET_URL}/portfolio', methods=["GET", "POST"])
 def admin_portfolio():
     if not admin_logged_in():
@@ -920,13 +1069,15 @@ def admin_portfolio():
         for file in files:
             if file and allowed_file(file.filename):
                 filename = secure_filename(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}")
-                file.save(os.path.join(UPLOAD_FOLDER, filename))
+                save_path = os.path.join(UPLOAD_FOLDER, filename)
+                file.save(save_path)
                 fichiers_nouveaux.append(filename)
         fichiers = fichiers_existants + fichiers_nouveaux
         if titre_fr and titre_en and desc_fr and desc_en:
             if request.form.get("edit_idx") and request.form.get("edit_idx").isdigit():
                 idx = int(request.form.get("edit_idx"))
                 if 0 <= idx < len(PORTFOLIO):
+                    # Conserver anciens fichiers + nouveaux
                     PORTFOLIO[idx] = {
                         "titre": {"fr": titre_fr, "en": titre_en},
                         "desc": {"fr": desc_fr, "en": desc_en},
@@ -947,11 +1098,11 @@ def admin_portfolio():
         else:
             flash("Tous les champs texte sont requis.", "warning")
         return redirect(url_for('admin_portfolio'))
-    # Suppression
     delid = request.args.get("del")
     if delid and delid.isdigit():
         idx = int(delid)
         if 0 <= idx < len(PORTFOLIO):
+            # Supprimer physiquement les fichiers joints
             for f in PORTFOLIO[idx].get("fichiers", []):
                 try:
                     os.remove(os.path.join(UPLOAD_FOLDER, f))
@@ -962,7 +1113,6 @@ def admin_portfolio():
         else:
             flash("Index invalide pour suppression.", "danger")
         return redirect(url_for('admin_portfolio'))
-    # Pré-remplir si édition
     projet_to_edit = None
     if edit_idx and edit_idx.isdigit():
         idx = int(edit_idx)
@@ -1026,7 +1176,7 @@ def admin_portfolio():
     """
     return render(content, portfolio=PORTFOLIO, projet_to_edit=projet_to_edit)
 
-# --- Gestion des atouts / arguments via admin (CRUD complet) ---
+# --- Gestion des atouts via admin ---
 @app.route(f'/{ADMIN_SECRET_URL}/atouts', methods=["GET", "POST"])
 def admin_atouts():
     if not admin_logged_in():
@@ -1043,14 +1193,13 @@ def admin_atouts():
                     ATOUTS[idx] = {"fr": at_fr, "en": at_en}
                     flash("Argument mis à jour.", "success")
                 else:
-                    flash("Index invalide pour mise à jour.", "danger")
+                    flash("Index invalide.", "danger")
             else:
                 ATOUTS.append({"fr": at_fr, "en": at_en})
                 flash("Nouvel argument ajouté.", "success")
         else:
             flash("Les deux champs (FR et EN) sont requis.", "warning")
         return redirect(url_for('admin_atouts'))
-    # Suppression
     delid = request.args.get("del")
     if delid and delid.isdigit():
         idx = int(delid)
@@ -1060,7 +1209,6 @@ def admin_atouts():
         else:
             flash("Index invalide pour suppression.", "danger")
         return redirect(url_for('admin_atouts'))
-    # Pré-remplir si édition
     atout_to_edit = None
     if edit_idx and edit_idx.isdigit():
         idx = int(edit_idx)
@@ -1071,7 +1219,7 @@ def admin_atouts():
     content = """
     <div class="admin-nav text-center mb-3">
       <a href="{{ url_for('admin') }}">Accueil admin</a> |
-      <a href="{{ url_for('admin_atouts') }}">Pourquoi moi</a>
+      <a href="{{ url_for('admin_atouts') }}">Atouts</a>
     </div>
     <div class="admin-panel">
       <h5>Gestion des Atouts / Arguments</h5>
@@ -1104,9 +1252,9 @@ def admin_atouts():
     """
     return render(content, atouts=ATOUTS, atout_to_edit=atout_to_edit)
 
-# --- Gestion des messages reçus via admin, avec options avancées ---
+# --- Gestion des messages reçus via admin ---
 @app.route(f'/{ADMIN_SECRET_URL}/messages', methods=["GET", "POST"])
-@app.route(f'/{ADMIN_SECRET_URL}/messages/')  # prise en charge avec slash terminal
+@app.route(f'/{ADMIN_SECRET_URL}/messages/')
 def admin_messages():
     if not admin_logged_in():
         flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
@@ -1125,7 +1273,7 @@ def admin_messages():
         page = 1
     per_page = 10
 
-    # Toggle status
+    # Toggle status lu/new
     if action == "toggle" and idx_param and idx_param.isdigit():
         idx = int(idx_param)
         if 0 <= idx < len(MSGS):
@@ -1229,9 +1377,7 @@ def admin_messages():
               {% endif %}
             </td>
             <td>
-              <!-- Bouton Voir le détail -->
               <a href="{{ url_for('view_message', idx=idx) }}" class="btn btn-sm btn-primary">Voir</a>
-              <!-- Toggle lu/non lu -->
               <a href="{{ url_for('admin_messages', action='toggle', idx=idx, filter=filter_param, search=search_q, page=page) }}" class="btn btn-sm btn-secondary ms-1">
                 {% if msg.status=='new' %}{{ 'Marquer lu' if lang=='fr' else 'Mark read' }}{% else %}{{ 'Marquer non lu' if lang=='fr' else 'Mark unread' }}{% endif %}
               </a>
@@ -1276,7 +1422,6 @@ def admin_messages():
                   total_pages=total_pages,
                   MSGS=MSGS)
 
-# Route détail message
 @app.route(f'/{ADMIN_SECRET_URL}/messages/view/<int:idx>', methods=['GET', 'POST'])
 def view_message(idx):
     if not admin_logged_in():
@@ -1385,25 +1530,17 @@ def export_messages():
         'Content-Disposition': 'attachment; filename="messages.json"'
     })
 
-# ----------------------------------------
-# Gestion du carousel (“Tour de rôle”) via admin
-# ----------------------------------------
+# --- Gestion du carousel via admin ---
 @app.route(f'/{ADMIN_SECRET_URL}/carousel', methods=["GET", "POST"])
 def admin_carousel():
-    """
-    Permet à l'admin d'ajouter jusqu'à 6 fichiers (images ou PDF) pour la page d'accueil en rotation.
-    On peut uploader, supprimer, réordonner.
-    """
     if not admin_logged_in():
         flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
-    # GET params for action: del, move
     # Suppression
     delid = request.args.get("del")
     if delid and delid.isdigit():
         idx = int(delid)
         if 0 <= idx < len(ROTATOR_ITEMS):
-            # supprimer le fichier physiquement
             filename = ROTATOR_ITEMS[idx].get("filename")
             try:
                 os.remove(os.path.join(UPLOAD_FOLDER, filename))
@@ -1415,8 +1552,8 @@ def admin_carousel():
         else:
             flash("Index invalide pour suppression.", "danger")
         return redirect(url_for('admin_carousel'))
-    # Réordonner: move up/down
-    move = request.args.get("move")  # 'up' ou 'down'
+    # Réordonner
+    move = request.args.get("move")
     idx_param = request.args.get("idx")
     if move and idx_param and idx_param.isdigit():
         idx = int(idx_param)
@@ -1430,7 +1567,7 @@ def admin_carousel():
                 save_json_file(ROTATOR_FILE, ROTATOR_ITEMS)
                 flash("Item déplacé vers le bas.", "success")
         return redirect(url_for('admin_carousel'))
-    # Upload d'un nouveau fichier
+    # Upload nouveau fichier carousel
     if request.method == "POST":
         if len(ROTATOR_ITEMS) >= 6:
             flash("Limite atteinte: maximum 6 items autorisés.", "warning")
@@ -1441,11 +1578,9 @@ def admin_carousel():
             return redirect(url_for('admin_carousel'))
         if file and allowed_file(file.filename):
             ext = file.filename.rsplit('.', 1)[1].lower()
-            # Accepter uniquement images ou PDF pour carousel
             if ext not in IMAGE_EXTENSIONS.union(PDF_EXTENSIONS):
                 flash("Type de fichier non pris en charge pour le carousel (seulement images ou PDF).", "danger")
                 return redirect(url_for('admin_carousel'))
-            # Sauvegarde
             filename = secure_filename(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}")
             filepath = os.path.join(UPLOAD_FOLDER, filename)
             file.save(filepath)
@@ -1456,16 +1591,14 @@ def admin_carousel():
         else:
             flash("Fichier non valide.", "danger")
         return redirect(url_for('admin_carousel'))
-    # Affichage de la page de gestion du carousel
-    # Construire la liste des items existants avec aperçu
     lang = get_lang()
     content = """
     <div class="admin-nav text-center mb-3">
       <a href="{{ url_for('admin') }}">Accueil admin</a> |
-      <a href="{{ url_for('admin_carousel') }}">Tour de rôle</a>
+      <a href="{{ url_for('admin_carousel') }}">Carousel</a>
     </div>
     <div class="admin-panel">
-      <h5>Gestion du Tour de rôle (Carousel page d'accueil)</h5>
+      <h5>Gestion du Carousel (page d'accueil)</h5>
       <p>Nombre d'items actuels: {{ items|length }} / 6</p>
       {% if items %}
       <div class="table-responsive">
@@ -1525,13 +1658,11 @@ def admin_carousel():
     """
     return render(content, items=ROTATOR_ITEMS)
 
-# ----------------------------------------
-# Analytics route
-# ----------------------------------------
+# --- Analytics ---
 @app.route(f'/{ADMIN_SECRET_URL}/analytics')
 def admin_analytics():
     if not admin_logged_in():
-        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
+        flash("Veuillez vous connecter.", "warning")
         return redirect(url_for('admin'))
     counts = {}
     for m in MSGS:
@@ -1572,16 +1703,13 @@ def admin_analytics():
                   unread_msgs=unread_msgs,
                   total_services=total_services,
                   total_portfolio=total_portfolio,
-                  sorted_dates=sorted_dates,
-                  page="admin_analytics")
+                  sorted_dates=sorted_dates)
 
-# ----------------------------------------
-# Télécharger tout le dossier uploads en ZIP
-# ----------------------------------------
+# --- Télécharger tout uploads ---
 @app.route(f'/{ADMIN_SECRET_URL}/download_uploads')
 def download_all_uploads():
     if not admin_logged_in():
-        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
+        flash("Veuillez vous connecter.", "warning")
         return redirect(url_for('admin'))
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1594,13 +1722,11 @@ def download_all_uploads():
     zip_name = f"all_uploads_{datetime.now().strftime('%Y%m%d%H%M%S')}.zip"
     return send_file(memory_file, download_name=zip_name, as_attachment=True)
 
-# ----------------------------------------
-# Gestion du trafic via admin
-# ----------------------------------------
+# --- Trafic ---
 @app.route(f'/{ADMIN_SECRET_URL}/traffic')
 def admin_traffic():
     if not admin_logged_in():
-        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
+        flash("Veuillez vous connecter.", "warning")
         return redirect(url_for('admin'))
     agg = {}
     for entry in TRAFFIC:
@@ -1620,8 +1746,7 @@ def admin_traffic():
     per_page = 20
     total = len(rows_sorted)
     total_pages = (total + per_page - 1)//per_page
-    start = (page-1)*per_page
-    end = start + per_page
+    start = (page-1)*per_page; end = start + per_page
     page_rows = rows_sorted[start:end]
     content = """
     <div class="admin-nav text-center mb-3">
@@ -1676,12 +1801,9 @@ def admin_traffic():
                   page=page,
                   total_pages=total_pages)
 
-# ----------------------------------------
-# Sitemap (fonctionnalité SEO)
-# ----------------------------------------
+# --- Sitemap SEO ---
 @app.route('/sitemap.xml', methods=['GET'])
 def sitemap():
-    base_url = request.url_root.strip('/')
     pages = [
         url_for('index', _external=True),
         url_for('services', _external=True),
@@ -1698,22 +1820,126 @@ def sitemap():
     response = app.response_class("\n".join(xml), mimetype='application/xml')
     return response
 
-# ----------------------------------------
-# Favicon
-# ----------------------------------------
 @app.route('/favicon.ico')
 def favicon():
     return abort(404)
+
+# --- Nouvelle route admin: Paramètres du thème + photo ---
+@app.route(f'/{ADMIN_SECRET_URL}/settings', methods=['GET', 'POST'])
+def admin_settings():
+    if not admin_logged_in():
+        flash("Veuillez vous connecter.", "warning")
+        return redirect(url_for('admin'))
+    lang = get_lang()
+    if request.method == "POST":
+        # Récupération valeurs du formulaire :
+        nouvelle_couleur = request.form.get("couleur", "").strip()
+        nouvelle_font = request.form.get("font", "").strip()
+        nouvelle_photo_url = request.form.get("photo_url", "").strip()
+        photo_file = request.files.get("photo_file")
+        changed = False
+
+        # Couleur principale : validation hex #RRGGBB
+        if nouvelle_couleur:
+            if nouvelle_couleur.startswith("#") and len(nouvelle_couleur) == 7:
+                SITE["couleur"] = nouvelle_couleur
+                config_theme["couleur"] = nouvelle_couleur
+                changed = True
+            else:
+                flash("Format de couleur invalide. Utilisez #RRGGBB.", "warning")
+
+        # Police : on accepte tout nom, mais l'utilisateur doit s'assurer que c'est disponible via Google Fonts
+        if nouvelle_font:
+            SITE["font"] = nouvelle_font
+            config_theme["font"] = nouvelle_font
+            changed = True
+
+        # Photo de profil :
+        # - Si un fichier uploadé est présent, on l'utilise en priorité.
+        # - Sinon si URL fournie non vide, on l'utilise.
+        if photo_file and photo_file.filename:
+            # Vérifier extension image
+            ext = photo_file.filename.rsplit('.', 1)[1].lower() if '.' in photo_file.filename else ''
+            if ext in IMAGE_EXTENSIONS:
+                filename = secure_filename(f"profile_{datetime.now().strftime('%Y%m%d%H%M%S')}_{photo_file.filename}")
+                save_path = os.path.join(UPLOAD_FOLDER, filename)
+                photo_file.save(save_path)
+                # On stocke le chemin relatif pour l'accès via /uploads/<filename>
+                photo_path = url_for('uploaded_file', filename=filename)
+                SITE["photo"] = photo_path
+                config_theme["photo"] = photo_path
+                changed = True
+            else:
+                flash("Fichier de profil non valide. Extensions autorisées: jpg, jpeg, png, gif.", "warning")
+        else:
+            # Pas de fichier uploadé, on regarde l'URL
+            if nouvelle_photo_url:
+                # On peut faire une validation basique : doit commencer par http:// ou https://
+                if nouvelle_photo_url.startswith("http://") or nouvelle_photo_url.startswith("https://"):
+                    SITE["photo"] = nouvelle_photo_url
+                    config_theme["photo"] = nouvelle_photo_url
+                    changed = True
+                else:
+                    flash("URL de photo invalide. Commencez par http:// ou https://", "warning")
+        if changed:
+            save_json_file(CONFIG_FILE, config_theme)
+            flash(("Paramètres du thème mis à jour." if lang=="fr" else "Theme settings updated."), "success")
+        return redirect(url_for('admin_settings'))
+
+    # GET : afficher formulaire avec valeurs actuelles
+    current_color = SITE.get("couleur", default_color)
+    current_font = SITE.get("font", default_font)
+    current_photo = SITE.get("photo", default_photo)
+    content = """
+    <div class="admin-nav text-center mb-3">
+      <a href="{{ url_for('admin') }}">Accueil admin</a> |
+      <a href="{{ url_for('admin_settings') }}">Paramètres</a>
+    </div>
+    <div class="admin-panel">
+      <h5>{{ 'Paramètres du thème' if lang=='fr' else 'Theme Settings' }}</h5>
+      <form method="post" class="row g-3" enctype="multipart/form-data">
+        <div class="col-md-4">
+          <label for="couleur" class="form-label">{{ 'Couleur principale (hex)' if lang=='fr' else 'Primary color (hex)' }}</label>
+          <input type="text" class="form-control" id="couleur" name="couleur" value="{{ current_color }}" placeholder="#RRGGBB" required>
+        </div>
+        <div class="col-md-4">
+          <label for="font" class="form-label">{{ 'Police (Google Font ou locale)' if lang=='fr' else 'Font (Google Font or local)' }}</label>
+          <input type="text" class="form-control" id="font" name="font" value="{{ current_font }}" placeholder="Montserrat">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">{{ 'Photo de profil actuelle' if lang=='fr' else 'Current profile photo' }}</label><br>
+          {% if current_photo %}
+            <img src="{{ current_photo }}" alt="Photo profil" style="max-height:100px; border-radius:50%; border:2px solid var(--primary-color);">
+          {% else %}
+            <span class="text-muted">{{ 'Aucune photo définie' if lang=='fr' else 'No photo set' }}</span>
+          {% endif %}
+        </div>
+
+        <div class="col-md-4">
+          <label for="photo_url" class="form-label">{{ 'Nouvelle URL de photo' if lang=='fr' else 'New photo URL' }}</label>
+          <input type="text" class="form-control" id="photo_url" name="photo_url" value="" placeholder="https://...">
+          <div class="form-text">{{ 'Si vous fournissez une URL valide, elle sera utilisée.' if lang=='fr' else 'If you provide a valid URL, it will be used.' }}</div>
+        </div>
+        <div class="col-md-4">
+          <label for="photo_file" class="form-label">{{ 'Ou uploader un fichier image' if lang=='fr' else 'Or upload an image file' }}</label>
+          <input type="file" class="form-control" id="photo_file" name="photo_file" accept=".jpg,.jpeg,.png,.gif">
+          <div class="form-text">{{ 'Le fichier uploadé sera utilisé en priorité.' if lang=='fr' else 'Uploaded file will be used in priority.' }}</div>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <button type="submit" class="btn btn-contact">{{ 'Enregistrer' if lang=='fr' else 'Save' }}</button>
+        </div>
+      </form>
+      <div class="mt-3">
+        <p class="small">{{ 'La couleur, la police et la photo seront appliquées immédiatement sur tout le site.' if lang=='fr' else 'Color, font and photo will apply immediately across the site.' }}</p>
+      </div>
+    </div>
+    """
+    return render(content, current_color=current_color, current_font=current_font, current_photo=current_photo)
 
 # ----------------------------------------
 # Lancement de l'application
 # ----------------------------------------
 if __name__ == '__main__':
-    # Pour debug, vous pouvez afficher la liste des routes au démarrage :
-    # with app.test_request_context():
-    #     print("Routes disponibles :")
-    #     for rule in app.url_map.iter_rules():
-    #         print(rule)
     port = int(os.environ.get("PORT", 5000))
     host = "0.0.0.0"
     debug_env = os.environ.get("DEBUG", "False").lower() in ("true", "1", "yes")
