@@ -21,22 +21,22 @@ MSG_FILE = os.environ.get("MSG_FILE_PATH", os.path.join(UPLOAD_FOLDER, "messages
 TRAFFIC_FILE = os.environ.get("TRAFFIC_FILE_PATH", os.path.join(UPLOAD_FOLDER, "traffic.json"))
 ROTATOR_FILE = os.environ.get("ROTATOR_FILE_PATH", os.path.join(UPLOAD_FOLDER, "rotator.json"))
 CONFIG_FILE = os.environ.get("CONFIG_FILE_PATH", os.path.join(UPLOAD_FOLDER, "config.json"))
+GALLERY_FILE = os.environ.get("GALLERY_FILE_PATH", os.path.join(UPLOAD_FOLDER, "gallery.json"))
 
 # Créer le dossier d'uploads s'il n'existe pas
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # S'assurer que les répertoires contenant les fichiers JSON existent
-for path in [MSG_FILE, TRAFFIC_FILE, ROTATOR_FILE, CONFIG_FILE]:
+for path in [MSG_FILE, TRAFFIC_FILE, ROTATOR_FILE, CONFIG_FILE, GALLERY_FILE]:
     parent = os.path.dirname(path)
     if parent and not os.path.exists(parent):
         os.makedirs(parent, exist_ok=True)
 
 # Extensions autorisées pour upload
-ALLOWED_EXTENSIONS = {"pdf", "dwg", "rvt", "docx", "xlsx", "jpg", "jpeg", "png", "gif", "zip"}
+ALLOWED_EXTENSIONS = {"pdf", "dwg", "rvt", "docx", "xlsx", "jpg", "jpeg", "png", "gif", "zip",
+                      "mp4", "webm", "ogg"}  # incluant vidéos
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif"}
 PDF_EXTENSIONS = {"pdf"}
-
-# Taille maximale pour upload (optionnel) : ici pas défini, mais tu peux configurer via Flask config si souhaité
-# app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # ex. 16 MB
+VIDEO_EXTENSIONS = {"mp4", "webm", "ogg"}
 
 # ----------------------------------------
 # Configuration Flask et logs
@@ -67,7 +67,7 @@ def load_json_file(path):
     """
     Charge un JSON. Retourne dict ou list selon le contenu, ou initialise s'il n'existe pas ou erreur.
     - Si c'est config (config.json), on attend un dict.
-    - Pour les autres (messages, traffic, rotator), on attend une list.
+    - Pour les autres (messages, traffic, rotator, gallery), on attend une list.
     """
     if os.path.exists(path):
         try:
@@ -133,13 +133,15 @@ config_theme = load_json_file(CONFIG_FILE)
 # Valeurs par défaut si absentes
 default_color = "#1f87e0"
 default_font = "Montserrat"
-# Pour la photo de profil, on peut avoir :
-# - une URL externe (commençant par http:// ou https://)
-# - ou un chemin relatif vers uploads, p.ex. "/uploads/filename.jpg"
 default_photo = "https://randomuser.me/api/portraits/men/75.jpg"
 theme_color = config_theme.get("couleur", default_color)
 theme_font = config_theme.get("font", default_font)
 theme_photo = config_theme.get("photo", default_photo)
+
+# Gallery items
+GALLERY_ITEMS = load_json_file(GALLERY_FILE)
+if not isinstance(GALLERY_ITEMS, list):
+    GALLERY_ITEMS = []
 
 # ----------------------------------------
 # Données dynamiques du site
@@ -154,7 +156,7 @@ SITE = {
         "fr": "Vous avez un projet ? Confiez-le à un professionnel passionné.",
         "en": "Have a project? Entrust it to a passionate expert."
     },
-    # Photo de profil : si URL externe, on utilise directement ; si chemin relatif (ex. "/uploads/xxx.jpg"), il faut que la route /uploads/<filename> serve le fichier
+    # Photo de profil
     "photo": theme_photo,
     "email": "entreprise2rc@gmail.com",
     "tel": "+227 96 38 08 77",
@@ -239,7 +241,6 @@ def send_email_notification(subject: str, body: str):
 # ----------------------------------------
 # Template HTML de base (BASE)
 # ----------------------------------------
-# On inclut ici CSS/JS Bootstrap, Google Fonts dynamiques, et styles personnalisés pour rendre le site plus attrayant :
 BASE = """
 <!DOCTYPE html>
 <html lang="{{ lang }}">
@@ -273,7 +274,7 @@ BASE = """
             transition: color 0.2s;
         }
         a:hover {
-            color: darken(var(--primary-color), 10%) !important;
+            /* Pas de darken CSS natif; on garde underline */
             text-decoration: underline;
         }
         /* Navbar */
@@ -292,7 +293,7 @@ BASE = """
             text-align: center;
             color: #fff;
             padding: 60px 0;
-            background: 
+            background:
                 linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)),
                 url('{{ site.photo }}') center/cover no-repeat;
         }
@@ -428,6 +429,47 @@ BASE = """
             transform: scale(1.05);
         }
 
+        /* Gallery */
+        .gallery-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            justify-content: center;
+        }
+        .gallery-item {
+            background: {% if session.get('dark_mode') %}#1e1e1e{% else %}#fff{% endif %};
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+        .gallery-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+        }
+        .gallery-item img,
+        .gallery-item video {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+        .gallery-caption {
+            padding: 12px;
+        }
+        .gallery-caption h5 {
+            margin: 0 0 8px;
+            font-size: 1.1rem;
+            color: var(--primary-color);
+        }
+        .gallery-caption p {
+            margin: 0;
+            font-size: 0.95rem;
+            color: {% if session.get('dark_mode') %}#ccc{% else %}#555{% endif %};
+        }
+
         /* Footer */
         .footer { background: #222c41; color: #fff; padding: 30px 0; margin-top: 0; }
         .footer a { color: #ffd600; text-decoration: none; }
@@ -485,12 +527,10 @@ BASE = """
                 height: auto;
             }
             .hero img { width: 100px; height:100px; }
+            .gallery-item {
+                width: 100%;
+            }
         }
-
-        /* Petite fonction CSS pour assombrir la couleur (darken) */
-        /* Note: Bootstrap n'a pas de fonction darken native dans CSS pur; 
-           Mais certains navigateurs peuvent interpréter color-mod ou filter. 
-           Pour simplicité, dans ce template, les hover plus sombres ne sont pas strictement calculés ici. */
     </style>
 </head>
 <body>
@@ -505,6 +545,7 @@ BASE = """
         <li class="nav-item"><a class="nav-link {% if page=='accueil' %}active{% endif %}" href="{{ url_for('index') }}">{{ "Accueil" if lang=='fr' else "Home" }}</a></li>
         <li class="nav-item"><a class="nav-link {% if page=='services' %}active{% endif %}" href="{{ url_for('services') }}">{{ "Services" if lang=='fr' else "Services" }}</a></li>
         <li class="nav-item"><a class="nav-link {% if page=='portfolio' %}active{% endif %}" href="{{ url_for('portfolio') }}">{{ "Portfolio" if lang=='fr' else "Portfolio" }}</a></li>
+        <li class="nav-item"><a class="nav-link {% if page=='galeries' %}active{% endif %}" href="{{ url_for('galeries') }}">{{ "Galeries" if lang=='fr' else "Galleries" }}</a></li>
         <li class="nav-item"><a class="nav-link {% if page=='pourquoi' %}active{% endif %}" href="{{ url_for('pourquoi') }}">{{ "Pourquoi moi ?" if lang=='fr' else "Why me?" }}</a></li>
         <li class="nav-item"><a class="nav-link {% if page=='contact' %}active{% endif %}" href="{{ url_for('contact') }}">{{ "Contact / Projets" if lang=='fr' else "Contact / Project" }}</a></li>
         <li class="nav-item lang-select">
@@ -766,6 +807,42 @@ def portfolio():
     """
     return render(content, page="portfolio", titre_page=("Portfolio" if lang=="fr" else "Portfolio"), portfolio=PORTFOLIO)
 
+@app.route('/galeries')
+def galeries():
+    """
+    Affiche la page de galerie publique.
+    """
+    lang = get_lang()
+    # Construire le contenu HTML pour la galerie
+    content = """
+    <h2 class="section-title text-center">{{ "Galeries" if lang=='fr' else "Galleries" }}</h2>
+    <div class="gallery-container mt-4">
+      {% for item in gallery_items %}
+      <div class="gallery-item">
+        {% if item.type == 'image' %}
+          <img src="{{ item.source }}" alt="{{ item.title or '' }}">
+        {% elif item.type == 'video' %}
+          <video controls>
+            <source src="{{ item.source }}" type="video/{{ item.source.rsplit('.', 1)[1].lower() }}">
+            Votre navigateur ne supporte pas la lecture vidéo.
+          </video>
+        {% endif %}
+        <div class="gallery-caption">
+          {% if item.title %}
+            <h5>{{ item.title }}</h5>
+          {% endif %}
+          {% if item.description %}
+            <p>{{ item.description }}</p>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    """
+    # Pour chaque item: item.source peut être URL externe ou url_for uploaded file.
+    # On passe gallery_items au template
+    return render(content, page="galeries", titre_page=("Galeries" if lang=="fr" else "Galleries"), gallery_items=GALLERY_ITEMS)
+
 @app.route('/pourquoi')
 def pourquoi():
     lang = get_lang()
@@ -783,7 +860,7 @@ def pourquoi():
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
-    """Serve les fichiers uploadés (images, pdf, etc.)."""
+    """Serve les fichiers uploadés (images, pdf, vidéo, etc.)."""
     return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
 
 @app.route('/contact', methods=['GET', 'POST'])
@@ -843,11 +920,11 @@ def contact():
             <textarea class="form-control" id="projet" name="projet" rows="5" required></textarea>
           </div>
           <div class="mb-3">
-            <label for="fichier" class="form-label">{{ "Joindre un ou plusieurs fichiers (pdf, dwg, rvt, images...)" if lang=='fr' else "Attach one or more files (pdf, dwg, rvt, images...)" }}</label>
+            <label for="fichier" class="form-label">{{ "Joindre un ou plusieurs fichiers (pdf, dwg, rvt, images, vidéos...)" if lang=='fr' else "Attach one or more files (pdf, dwg, rvt, images, videos...)" }}</label>
             <div class="drag-drop-area" id="dragDrop">
                 <i class="bi bi-cloud-arrow-up fs-2"></i><br>
                 {{ "Glissez-déposez vos fichiers ici ou cliquez pour choisir" if lang=='fr' else "Drag & drop files here or click to select" }}
-                <input class="form-control" type="file" name="fichier" id="fichier" accept=".pdf,.dwg,.rvt,.docx,.xlsx,.jpg,.jpeg,.png,.gif,.zip" multiple style="margin-top:10px;">
+                <input class="form-control" type="file" name="fichier" id="fichier" accept=".pdf,.dwg,.rvt,.docx,.xlsx,.jpg,.jpeg,.png,.gif,.zip,.mp4,.webm,.ogg" multiple style="margin-top:10px;">
                 <ul id="fileList" style="list-style:none; padding-left:0;"></ul>
             </div>
           </div>
@@ -900,6 +977,7 @@ def admin():
     total_atouts = len(ATOUTS)
     total_traffic = len(TRAFFIC)
     total_rotator = len(ROTATOR_ITEMS)
+    total_gallery = len(GALLERY_ITEMS)
     today = datetime.now().strftime("%Y-%m-%d")
     visits_today = sum(1 for t in TRAFFIC if t.get("timestamp", "").startswith(today))
     content = """
@@ -910,6 +988,7 @@ def admin():
       <a href="{{ url_for('admin_atouts') }}">Atouts</a> |
       <a href="{{ url_for('admin_messages') }}">Messages{% if unread_msgs>0 %} ({{ unread_msgs }}){% endif %}</a> |
       <a href="{{ url_for('admin_carousel') }}">Carousel ({{ total_rotator }})</a> |
+      <a href="{{ url_for('admin_gallery') }}">Galeries ({{ total_gallery }})</a> |
       <a href="{{ url_for('admin_analytics') }}">Analytics</a> |
       <a href="{{ url_for('admin_traffic') }}">Traffic</a> |
       <a href="{{ url_for('admin_settings') }}">Paramètres</a> |
@@ -924,8 +1003,12 @@ def admin():
         <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_atouts }}</h5><p>Atouts</p></div></div></div>
         <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_msgs }}</h5><p>Messages ({{ unread_msgs }} non lus)</p></div></div></div>
       </div>
-      <p><strong>Visites totales :</strong> {{ total_traffic }}, <strong>Aujourd'hui :</strong> {{ visits_today }}</p>
-      <p><strong>Items Carousel :</strong> {{ total_rotator }} (max 6)</p>
+      <div class="row">
+        <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_rotator }}</h5><p>Carousel Items</p></div></div></div>
+        <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_gallery }}</h5><p>Galerie Items</p></div></div></div>
+        <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_traffic }}</h5><p>Visites totales</p></div></div></div>
+        <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ visits_today }}</h5><p>Visites aujourd'hui</p></div></div></div>
+      </div>
     </div>
     """
     return render(content,
@@ -938,7 +1021,8 @@ def admin():
                   total_atouts=total_atouts,
                   total_traffic=total_traffic,
                   visits_today=visits_today,
-                  total_rotator=total_rotator)
+                  total_rotator=total_rotator,
+                  total_gallery=total_gallery)
 
 @app.route(f'/{ADMIN_SECRET_URL}/logout')
 def admin_logout():
@@ -1658,6 +1742,170 @@ def admin_carousel():
     """
     return render(content, items=ROTATOR_ITEMS)
 
+# --- Gestion de la galerie via admin ---
+@app.route(f'/{ADMIN_SECRET_URL}/gallery', methods=["GET", "POST"])
+def admin_gallery():
+    """
+    Permet d'ajouter/supprimer des éléments de la galerie (images ou vidéos).
+    Les items persistent dans gallery.json et fichiers uploadés dans uploads/.
+    """
+    if not admin_logged_in():
+        flash("Veuillez vous connecter.", "warning")
+        return redirect(url_for('admin'))
+    # Suppression d'un item
+    delid = request.args.get("del")
+    if delid and delid.isdigit():
+        idx = int(delid)
+        if 0 <= idx < len(GALLERY_ITEMS):
+            item = GALLERY_ITEMS.pop(idx)
+            # Si l'élément source est un fichier uploadé (chemin URL interne), on supprime le fichier physiquement
+            src = item.get("source", "")
+            # Si source commence par /uploads/, extraire le filename
+            if src.startswith(url_for('uploaded_file', filename="").rsplit('/', 1)[0]):
+                # Extrait le filename
+                try:
+                    # url_for('uploaded_file', filename='') donne '/uploads/'
+                    base = url_for('uploaded_file', filename='')
+                    if src.startswith(base):
+                        filename = src[len(base):]
+                        # Supprimer le fichier s'il existe
+                        file_path = os.path.join(UPLOAD_FOLDER, filename)
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                except Exception:
+                    pass
+            save_json_file(GALLERY_FILE, GALLERY_ITEMS)
+            flash("Élément galerie supprimé.", "info")
+        else:
+            flash("Index invalide pour suppression.", "danger")
+        return redirect(url_for('admin_gallery'))
+
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        description = request.form.get("description", "").strip()
+        url_input = request.form.get("url_input", "").strip()
+        file = request.files.get("file")
+        added = False
+
+        # Si upload de fichier
+        if file and file.filename:
+            if allowed_file(file.filename):
+                ext = file.filename.rsplit('.', 1)[1].lower()
+                if ext in IMAGE_EXTENSIONS.union(VIDEO_EXTENSIONS):
+                    filename = secure_filename(f"gallery_{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}")
+                    save_path = os.path.join(UPLOAD_FOLDER, filename)
+                    file.save(save_path)
+                    source = url_for('uploaded_file', filename=filename)
+                    item_type = 'image' if ext in IMAGE_EXTENSIONS else 'video'
+                    GALLERY_ITEMS.append({
+                        "type": item_type,
+                        "source": source,
+                        "title": title,
+                        "description": description
+                    })
+                    added = True
+                else:
+                    flash("Extension non prise en charge pour la galerie. Images: jpg/jpeg/png/gif, Vidéos: mp4/webm/ogg.", "warning")
+            else:
+                flash("Fichier non valide pour la galerie.", "warning")
+        # Sinon si URL fournie
+        elif url_input:
+            # Validation basique: URL commence par http:// ou https://
+            if url_input.startswith("http://") or url_input.startswith("https://"):
+                ext = url_input.rsplit('.', 1)[-1].lower()
+                if ext in IMAGE_EXTENSIONS.union(VIDEO_EXTENSIONS):
+                    item_type = 'image' if ext in IMAGE_EXTENSIONS else 'video'
+                    GALLERY_ITEMS.append({
+                        "type": item_type,
+                        "source": url_input,
+                        "title": title,
+                        "description": description
+                    })
+                    added = True
+                else:
+                    flash("L'URL ne pointe pas vers un fichier image ou vidéo pris en charge.", "warning")
+            else:
+                flash("URL invalide. Doit commencer par http:// ou https://", "warning")
+        else:
+            flash("Veuillez fournir un fichier ou une URL pour la galerie.", "warning")
+
+        if added:
+            save_json_file(GALLERY_FILE, GALLERY_ITEMS)
+            flash("Élément ajouté à la galerie.", "success")
+        return redirect(url_for('admin_gallery'))
+
+    # Affichage liste items galerie
+    lang = get_lang()
+    content = """
+    <div class="admin-nav text-center mb-3">
+      <a href="{{ url_for('admin') }}">Accueil admin</a> |
+      <a href="{{ url_for('admin_gallery') }}">Galeries</a>
+    </div>
+    <div class="admin-panel">
+      <h5>Gestion de la galerie</h5>
+      {% if gallery_items %}
+      <div class="table-responsive">
+      <table class="table table-hover admin-table align-middle">
+        <thead>
+          <tr><th>#</th><th>Type</th><th>Source</th><th>Titre</th><th>Description</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+        {% for item in gallery_items %}
+          <tr>
+            <td>{{ loop.index0 }}</td>
+            <td>{{ item.type }}</td>
+            <td style="max-width:200px; word-break:break-all;">
+              {% if item.source.startswith('http') %}
+                <a href="{{ item.source }}" target="_blank">{{ item.source|truncate(30) }}</a>
+              {% else %}
+                <a href="{{ item.source }}" target="_blank">{{ item.source }}</a>
+              {% endif %}
+            </td>
+            <td>{{ item.title or '-' }}</td>
+            <td>{{ item.description or '-' }}</td>
+            <td>
+              <a href="{{ url_for('admin_gallery', del=loop.index0) }}" class="btn btn-sm btn-danger" onclick="return confirm('Supprimer cet élément de la galerie?');">Suppr.</a>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+        <p>Aucun élément dans la galerie.</p>
+      {% endif %}
+      <hr>
+      <h6>Ajouter un nouvel élément</h6>
+      <form method="post" enctype="multipart/form-data" class="row g-3">
+        <div class="col-md-4">
+          <label for="title" class="form-label">{{ 'Titre (optionnel)' if lang=='fr' else 'Title (optional)' }}</label>
+          <input type="text" class="form-control" id="title" name="title" placeholder="{{ 'Titre de l’élément' if lang=='fr' else 'Item title' }}">
+        </div>
+        <div class="col-md-4">
+          <label for="description" class="form-label">{{ 'Description (optionnel)' if lang=='fr' else 'Description (optional)' }}</label>
+          <input type="text" class="form-control" id="description" name="description" placeholder="{{ 'Description brève' if lang=='fr' else 'Brief description' }}">
+        </div>
+        <div class="col-md-4">
+          <label for="url_input" class="form-label">{{ 'URL image/vidéo' if lang=='fr' else 'Image/Video URL' }}</label>
+          <input type="text" class="form-control" id="url_input" name="url_input" placeholder="https://...">
+          <div class="form-text">{{ 'Fournir une URL directe vers un fichier image ou vidéo.' if lang=='fr' else 'Provide direct URL to image or video file.' }}</div>
+        </div>
+        <div class="col-md-4">
+          <label for="file" class="form-label">{{ 'Ou uploader un fichier image/vidéo' if lang=='fr' else 'Or upload image/video file' }}</label>
+          <input type="file" class="form-control" id="file" name="file" accept=".jpg,.jpeg,.png,.gif,.mp4,.webm,.ogg">
+          <div class="form-text">{{ 'Le fichier sera stocké pour la galerie.' if lang=='fr' else 'File will be stored for gallery.' }}</div>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <button type="submit" class="btn btn-contact">{{ 'Ajouter' if lang=='fr' else 'Add' }}</button>
+        </div>
+      </form>
+      <div class="mt-3">
+        <p class="small">{{ 'Les images/vidéos uploadées sont stockées dans uploads/ et resteront disponibles même après mise à jour du site.' if lang=='fr' else 'Uploaded images/videos are stored in uploads/ and remain available even after site updates.' }}</p>
+      </div>
+    </div>
+    """
+    return render(content, gallery_items=GALLERY_ITEMS)
+
 # --- Analytics ---
 @app.route(f'/{ADMIN_SECRET_URL}/analytics')
 def admin_analytics():
@@ -1808,6 +2056,7 @@ def sitemap():
         url_for('index', _external=True),
         url_for('services', _external=True),
         url_for('portfolio', _external=True),
+        url_for('galeries', _external=True),
         url_for('pourquoi', _external=True),
         url_for('contact', _external=True),
         url_for('toggle_dark', _external=True),
