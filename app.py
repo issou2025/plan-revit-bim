@@ -7,14 +7,15 @@ import logging
 import smtplib
 from datetime import datetime
 from email.message import EmailMessage
-from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory, send_file, abort
+from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory, send_file, abort, flash
+
 from werkzeug.utils import secure_filename
 
 # ----------------------------------------
 # Configuration de base
 # ----------------------------------------
 app = Flask(__name__)
-# En production, définir SECRET_KEY via variable d'environnement pour sécurité
+# En production, définissez SECRET_KEY via variable d'environnement pour sécurité
 app.secret_key = os.environ.get("SECRET_KEY", "super_secret_key_2024")
 
 # Dossier des uploads
@@ -92,7 +93,7 @@ SITE = {
         "en": "Have a project? Entrust it to a passionate professional."
     },
     "photo": "https://randomuser.me/api/portraits/men/75.jpg",
-    "email": "entreprise2rc@gmail.com",
+    "email": "entreprise2rc@gmail.com",  # Adresse utilisée pour notifications email
     "tel": "+227 96 38 08 77",
     "whatsapp": "+227 96 38 08 77",
     "linkedin": "https://www.linkedin.com/in/issoufou-chefou",
@@ -109,6 +110,7 @@ SITE = {
 }
 ANNEE = 2025
 
+# Structures initiales : Services, Portfolio, Atouts
 SERVICES = [
     {"titre": {"fr": "Plans d’armatures Revit", "en": "Rebar plans (Revit)"},
      "desc": {"fr": "Plans d’armatures clairs et complets pour béton armé.",
@@ -164,7 +166,7 @@ ATOUTS = [
 # ----------------------------------------
 ADMIN_USER = "bacseried@gmail.com"
 ADMIN_PASS = "mx23fy"
-ADMIN_SECRET_URL = "issoufouachraf_2025"
+ADMIN_SECRET_URL = "issoufouachraf_2025"  # À adapter si vous voulez un autre chemin
 LANGS = {"fr": "Français", "en": "English"}
 
 # ----------------------------------------
@@ -202,6 +204,8 @@ def send_email_notification(subject: str, body: str):
 # ----------------------------------------
 # Template HTML de base (BASE)
 # ----------------------------------------
+# Utilise Bootstrap 5.3, icônes Bootstrap Icons.
+# Inclut la gestion des flashs et un drag-drop simplifié.
 BASE = """
 <!DOCTYPE html>
 <html lang="{{ lang }}">
@@ -224,6 +228,7 @@ BASE = """
             margin: 0; padding: 0;
         }
         a { color: {% if session.get('dark_mode') %}#66b2ff{% else %}#1f87e0{% endif %}; }
+        .navbar, .footer { transition: background 0.3s; }
         /* Navbar */
         .navbar { background: linear-gradient(90deg,{{ site.couleur }},#43e3ff 100%); }
         .navbar-brand, .nav-link { color: #fff !important; }
@@ -248,11 +253,11 @@ BASE = """
             width: 140px; border-radius: 100px; margin-bottom: 15px;
             border: 3px solid #ffd600; box-shadow:0 4px 16px #0008;
         }
-        .btn-contact, .btn-projet {
+        .btn-contact, .btn-projet, .btn-admin {
             background: #ffd600; color: #24315e; font-weight:bold; border-radius:13px;
             transition: transform 0.2s, background 0.2s;
         }
-        .btn-contact:hover, .btn-projet:hover {
+        .btn-contact:hover, .btn-projet:hover, .btn-admin:hover {
             background: #fff200; transform: translateY(-2px);
         }
         /* Section titles */
@@ -301,7 +306,7 @@ BASE = """
             box-shadow:0 2px 15px #0288d122; font-size:1.08rem; font-weight:500; text-align: center;
         }
         /* Admin panel */
-        .admin-nav { background:#22223b; padding:13px; border-radius:10px; margin-bottom:10px; }
+        .admin-nav { background:#22223b; padding:10px; border-radius:10px; margin-bottom:10px; }
         .admin-nav a { color:#ffd600; margin:0 8px; font-weight:bold; }
         .admin-panel {
             background:{% if session.get('dark_mode') %}#1e1e1e{% else %}#fff{% endif %};
@@ -364,7 +369,17 @@ BASE = """
     </div>
   </div>
 </nav>
-<div class="container">
+<div class="container py-4">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, msg in messages %}
+          <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ msg }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
     {% block content %}{% endblock %}
 </div>
 <footer class="footer text-center">
@@ -386,9 +401,10 @@ BASE = """
     <div class="mt-2 small">&copy; {{ annee }} – {{ "Développé par" if lang=='fr' else "Developed by" }} {{ site.nom }}</div>
   </div>
 </footer>
-<!-- Bootstrap JS -->
+<!-- Bootstrap JS et dépendances -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+// Gestion du drag & drop simplifié pour le formulaire contact
 const dropArea = document.getElementById('dragDrop');
 if (dropArea) {
   dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.classList.add('dragover'); });
@@ -492,7 +508,7 @@ def index():
         <a href="{{{{ url_for('contact') }}}}" class="btn btn-contact btn-lg mt-3"><i class="bi bi-chat-left-dots"></i> {('Proposez votre projet' if lang=='fr' else 'Submit your project')}</a>
       </div>
     </div>
-    <div class="project-cta">
+    <div class="project-cta text-center">
       <i class="bi bi-lightbulb"></i> {('Votre projet mérite un expert passionné !' if lang=='fr' else 'Your project deserves a passionate expert!')}
     </div>
     """
@@ -576,12 +592,12 @@ def uploaded_file(filename):
 @app.route('/contact', methods=['GET', 'POST'])
 def contact():
     lang = get_lang()
-    msg = None
     if request.method == "POST":
         # Honeypot anti-spam
         honeypot = request.form.get("website", "")
         if honeypot:
             logging.warning("Spam détecté via honeypot, formulaire ignoré.")
+            flash("Erreur envoi formulaire.", "warning")
             return redirect(url_for('contact'))
         nom = request.form.get("nom")
         email = request.form.get("email")
@@ -607,16 +623,13 @@ def contact():
         subject = f"Nouveau message de {nom}"
         body = f"Nom: {nom}\nEmail: {email}\nProjet: {projet}\nTimestamp: {new_msg['timestamp']}\nFichiers: {', '.join(fichiers) if fichiers else 'aucun'}"
         send_email_notification(subject, body)
-        msg = (f"Merci {nom}, j'ai bien reçu votre demande et vos fichiers ! Je vous répondrai sous 24h."
-               if lang=="fr"
-               else f"Thank you {nom}, your request and files have been received! I will get back to you within 24h.")
+        flash((f"Merci {nom}, j'ai bien reçu votre demande et vos fichiers ! Je vous répondrai sous 24h." if lang=="fr"
+               else f"Thank you {nom}, your request and files have been received! I will get back to you within 24h."), "success")
+        return redirect(url_for('contact'))
     content = """
     <h2 class="section-title text-center">{{ "Votre projet commence ici" if lang=='fr' else "Start your project here" }}</h2>
     <div class="row justify-content-center mt-4">
       <div class="col-md-8">
-        {% if msg %}
-          <div class="alert alert-success">{{ msg }}</div>
-        {% endif %}
         <form method="post" class="border rounded p-4 shadow-sm bg-white" enctype="multipart/form-data">
           <input type="text" name="website" style="display:none">
           <div class="mb-3">
@@ -649,7 +662,7 @@ def contact():
       </div>
     </div>
     """
-    return render(content, page="contact", titre_page=("Contact / Projet" if get_lang()=="fr" else "Contact / Project"), msg=msg)
+    return render(content, page="contact", titre_page=("Contact / Projet" if get_lang()=="fr" else "Contact / Project"))
 
 # ----------------------------------------
 # Routes Admin
@@ -663,14 +676,15 @@ def admin():
             p = request.form.get("pass")
             if u == ADMIN_USER and p == ADMIN_PASS:
                 session["admin"] = True
+                flash("Connexion réussie.", "success")
                 return redirect(url_for('admin'))
             else:
                 error = "Identifiants incorrects."
+                flash(error, "danger")
         login = """
         <div class="row justify-content-center mt-5">
           <div class="col-md-4 admin-panel">
             <h4 class="mb-3 text-center"><i class="bi bi-person-gear"></i> Connexion Admin</h4>
-            {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
             <form method="post">
                 <input class="form-control mb-2" type="text" name="user" placeholder="Email admin" required>
                 <input class="form-control mb-3" type="password" name="pass" placeholder="Mot de passe" required>
@@ -679,7 +693,7 @@ def admin():
           </div>
         </div>
         """
-        return render(login, titre_page="Connexion admin", error=error)
+        return render(login, titre_page="Connexion admin", page="admin_login")
     # Dashboard admin avec analytics et traffic
     total_msgs = len(MSGS)
     unread_msgs = sum(1 for m in MSGS if m.get("status") == "new")
@@ -698,25 +712,23 @@ def admin():
       <a href="{{ url_for('admin_messages') }}">Messages reçus{% if unread_msgs>0 %} ({{ unread_msgs }}){% endif %}</a> |
       <a href="{{ url_for('admin_analytics') }}">Analytics</a> |
       <a href="{{ url_for('admin_traffic') }}">Traffic</a> |
-      <a href="{{ url_for('download_all_uploads') }}">Télécharger tout Uploads</a> |
+      <a href="{{ url_for('download_all_uploads') }}">Télécharger Uploads</a> |
       <a href="{{ url_for('admin_logout') }}">Déconnexion</a>
     </div>
     <div class="admin-panel">
-      <h4><i class="bi bi-person-gear"></i> Tableau de bord Admin</h4>
-      <ul>
-        <li><b>Services</b> : {{ total_services }} éléments.</li>
-        <li><b>Portfolio</b> : {{ total_portfolio }} réalisations.</li>
-        <li><b>Pourquoi moi</b> : {{ total_atouts }} arguments.</li>
-        <li><b>Messages reçus</b> : {{ total_msgs }} messages, {{ unread_msgs }} non lus.</li>
-        <li><b>Analytics</b> : Statistiques du site.</li>
-        <li><b>Traffic</b> : {{ total_traffic }} visites enregistrées, {{ visits_today }} aujourd'hui.</li>
-        <li><b>Télécharger tout Uploads</b> : Créer un ZIP de tous les fichiers uploadés.</li>
-      </ul>
+      <h4><i class="bi bi-speedometer2"></i> Tableau de bord Admin</h4>
+      <div class="row">
+        <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_services }}</h5><p>Services</p></div></div></div>
+        <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_portfolio }}</h5><p>Portfolio</p></div></div></div>
+        <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_atouts }}</h5><p>Atouts</p></div></div></div>
+        <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_msgs }}</h5><p>Messages ({{ unread_msgs }} non lus)</p></div></div></div>
+      </div>
+      <p><strong>Visites totales :</strong> {{ total_traffic }}, <strong>Aujourd'hui :</strong> {{ visits_today }}</p>
     </div>
     """
     return render(content,
                   titre_page="Admin",
-                  page="admin",
+                  page="admin_dashboard",
                   total_msgs=total_msgs,
                   unread_msgs=unread_msgs,
                   total_services=total_services,
@@ -728,40 +740,78 @@ def admin():
 @app.route(f'/{ADMIN_SECRET_URL}/logout')
 def admin_logout():
     session["admin"] = False
+    flash("Déconnecté.", "info")
     return redirect(url_for('admin'))
 
-# --- Gestion des services via admin ---
+# --- Gestion des services via admin (CRUD complet) ---
 @app.route(f'/{ADMIN_SECRET_URL}/services', methods=["GET", "POST"])
 def admin_services():
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
+    # GET param edit: index à éditer
+    edit_idx = request.args.get("edit")
+    # POST: création ou mise à jour
     if request.method == "POST":
-        titre_fr = request.form.get("titre_fr")
-        titre_en = request.form.get("titre_en")
-        desc_fr = request.form.get("desc_fr")
-        desc_en = request.form.get("desc_en")
-        icon = request.form.get("icon")
-        if titre_fr and desc_fr and titre_en and desc_en:
-            SERVICES.append({
-                "titre": {"fr": titre_fr, "en": titre_en},
-                "desc": {"fr": desc_fr, "en": desc_en},
-                "icon": icon or "bi-star"
-            })
+        titre_fr = request.form.get("titre_fr", "").strip()
+        titre_en = request.form.get("titre_en", "").strip()
+        desc_fr = request.form.get("desc_fr", "").strip()
+        desc_en = request.form.get("desc_en", "").strip()
+        icon = request.form.get("icon", "").strip() or "bi-star"
+        if titre_fr and titre_en and desc_fr and desc_en:
+            if request.form.get("edit_idx") is not None and request.form.get("edit_idx").isdigit():
+                idx = int(request.form.get("edit_idx"))
+                if 0 <= idx < len(SERVICES):
+                    SERVICES[idx] = {
+                        "titre": {"fr": titre_fr, "en": titre_en},
+                        "desc": {"fr": desc_fr, "en": desc_en},
+                        "icon": icon
+                    }
+                    flash("Service mis à jour.", "success")
+                else:
+                    flash("Index de service invalide.", "danger")
+            else:
+                SERVICES.append({
+                    "titre": {"fr": titre_fr, "en": titre_en},
+                    "desc": {"fr": desc_fr, "en": desc_en},
+                    "icon": icon
+                })
+                flash("Nouveau service ajouté.", "success")
+        else:
+            flash("Tous les champs sont requis.", "warning")
+        return redirect(url_for('admin_services'))
+    # Suppression
     delid = request.args.get("del")
     if delid and delid.isdigit():
         idx = int(delid)
         if 0 <= idx < len(SERVICES):
             SERVICES.pop(idx)
+            flash("Service supprimé.", "info")
+        else:
+            flash("Index invalide pour suppression.", "danger")
         return redirect(url_for('admin_services'))
+    # Pré-remplir si édition
+    service_to_edit = None
+    if edit_idx and edit_idx.isdigit():
+        idx = int(edit_idx)
+        if 0 <= idx < len(SERVICES):
+            service_to_edit = SERVICES[idx]
+        else:
+            flash("Index invalide pour édition.", "warning")
+    # Rendu template
     content = """
     <div class="admin-nav text-center mb-3">
       <a href="{{ url_for('admin') }}">Accueil admin</a> |
       <a href="{{ url_for('admin_services') }}">Services</a>
     </div>
     <div class="admin-panel">
-      <h5>Services proposés</h5>
-      <table class="table admin-table">
-        <tr><th>#</th><th>Français</th><th>English</th><th>Description FR</th><th>Description EN</th><th>Icône</th><th></th></tr>
+      <h5>Gestion des Services</h5>
+      {% if services %}
+      <table class="table table-hover admin-table">
+        <thead>
+          <tr><th>#</th><th>FR</th><th>EN</th><th>Description FR</th><th>Description EN</th><th>Icon</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
         {% for serv in services %}
           <tr>
             <td>{{ loop.index0 }}</td>
@@ -770,149 +820,250 @@ def admin_services():
             <td>{{ serv.desc['fr'] }}</td>
             <td>{{ serv.desc['en'] }}</td>
             <td><i class="bi {{ serv.icon }}"></i> {{ serv.icon }}</td>
-            <td><a href="?del={{ loop.index0 }}" class="btn btn-danger btn-sm">Suppr.</a></td>
+            <td>
+              <a href="{{ url_for('admin_services', edit=loop.index0) }}" class="btn btn-sm btn-primary">Éditer</a>
+              <a href="{{ url_for('admin_services', del=loop.index0) }}" class="btn btn-sm btn-danger" onclick="return confirm('Supprimer ce service?');">Suppr.</a>
+            </td>
           </tr>
         {% endfor %}
+        </tbody>
       </table>
+      {% else %}
+        <p>Aucun service défini.</p>
+      {% endif %}
       <hr>
+      <h6>{{ 'Modifier le service' if service_to_edit else 'Ajouter un nouveau service' }}</h6>
       <form method="post" class="row g-2">
-        <div class="col-md-2"><input type="text" name="titre_fr" class="form-control" placeholder="Service (FR)" required></div>
-        <div class="col-md-2"><input type="text" name="titre_en" class="form-control" placeholder="Service (EN)" required></div>
-        <div class="col-md-2"><input type="text" name="desc_fr" class="form-control" placeholder="Description (FR)" required></div>
-        <div class="col-md-2"><input type="text" name="desc_en" class="form-control" placeholder="Description (EN)" required></div>
-        <div class="col-md-2"><input type="text" name="icon" class="form-control" placeholder="Icône bi-..." value="bi-star"></div>
-        <div class="col-md-2"><button class="btn btn-contact w-100" type="submit">Ajouter</button></div>
+        <input type="hidden" name="edit_idx" value="{{ request.args.get('edit') if service_to_edit is not none else '' }}">
+        <div class="col-md-3"><input type="text" name="titre_fr" value="{{ service_to_edit.titre['fr'] if service_to_edit }}" class="form-control" placeholder="Service (FR)" required></div>
+        <div class="col-md-3"><input type="text" name="titre_en" value="{{ service_to_edit.titre['en'] if service_to_edit }}" class="form-control" placeholder="Service (EN)" required></div>
+        <div class="col-md-3"><input type="text" name="desc_fr" value="{{ service_to_edit.desc['fr'] if service_to_edit }}" class="form-control" placeholder="Description (FR)" required></div>
+        <div class="col-md-3"><input type="text" name="desc_en" value="{{ service_to_edit.desc['en'] if service_to_edit }}" class="form-control" placeholder="Description (EN)" required></div>
+        <div class="col-md-3"><input type="text" name="icon" value="{{ service_to_edit.icon if service_to_edit }}" class="form-control" placeholder="Icône bi-..." ></div>
+        <div class="col-md-2"><button class="btn btn-contact w-100" type="submit">{{ 'Mettre à jour' if service_to_edit else 'Ajouter' }}</button></div>
       </form>
     </div>
     """
-    return render(content, services=SERVICES, page="admin_services")
+    return render(content, services=SERVICES, service_to_edit=service_to_edit)
 
-# --- Gestion du portfolio via admin ---
+# --- Gestion du portfolio via admin (CRUD complet) ---
 @app.route(f'/{ADMIN_SECRET_URL}/portfolio', methods=["GET", "POST"])
 def admin_portfolio():
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
+    edit_idx = request.args.get("edit")
+    # POST: création ou mise à jour
     if request.method == "POST":
-        titre_fr = request.form.get("titre_fr")
-        titre_en = request.form.get("titre_en")
-        desc_fr = request.form.get("desc_fr")
-        desc_en = request.form.get("desc_en")
-        imgs = request.form.get("imgs", "")
-        imgs = [img.strip() for img in imgs.split(",") if img.strip()]
-        fichiers = []
+        titre_fr = request.form.get("titre_fr", "").strip()
+        titre_en = request.form.get("titre_en", "").strip()
+        desc_fr = request.form.get("desc_fr", "").strip()
+        desc_en = request.form.get("desc_en", "").strip()
+        imgs_raw = request.form.get("imgs", "").strip()
+        imgs = [img.strip() for img in imgs_raw.split(",") if img.strip()]
+        fichiers_existants = []
+        fichiers_nouveaux = []
+        if request.form.get("edit_idx") and request.form.get("edit_idx").isdigit():
+            idx = int(request.form.get("edit_idx"))
+            if 0 <= idx < len(PORTFOLIO):
+                fichiers_existants = PORTFOLIO[idx].get("fichiers", [])
+        # Upload nouveaux fichiers
         files = request.files.getlist("fichiers")
         for file in files:
             if file and allowed_file(file.filename):
                 filename = secure_filename(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}")
                 file.save(os.path.join(UPLOAD_FOLDER, filename))
-                fichiers.append(filename)
-        if titre_fr and desc_fr and titre_en and desc_en:
-            PORTFOLIO.append({
-                "titre": {"fr": titre_fr, "en": titre_en},
-                "desc": {"fr": desc_fr, "en": desc_en},
-                "imgs": imgs,
-                "fichiers": fichiers
-            })
+                fichiers_nouveaux.append(filename)
+        fichiers = fichiers_existants + fichiers_nouveaux
+        if titre_fr and titre_en and desc_fr and desc_en:
+            if request.form.get("edit_idx") and request.form.get("edit_idx").isdigit():
+                idx = int(request.form.get("edit_idx"))
+                if 0 <= idx < len(PORTFOLIO):
+                    PORTFOLIO[idx] = {
+                        "titre": {"fr": titre_fr, "en": titre_en},
+                        "desc": {"fr": desc_fr, "en": desc_en},
+                        "imgs": imgs,
+                        "fichiers": fichiers
+                    }
+                    flash("Élément du portfolio mis à jour.", "success")
+                else:
+                    flash("Index invalide pour mise à jour.", "danger")
+            else:
+                PORTFOLIO.append({
+                    "titre": {"fr": titre_fr, "en": titre_en},
+                    "desc": {"fr": desc_fr, "en": desc_en},
+                    "imgs": imgs,
+                    "fichiers": fichiers
+                })
+                flash("Nouvel élément ajouté au portfolio.", "success")
+        else:
+            flash("Tous les champs texte sont requis.", "warning")
+        return redirect(url_for('admin_portfolio'))
+    # Suppression
     delid = request.args.get("del")
     if delid and delid.isdigit():
         idx = int(delid)
         if 0 <= idx < len(PORTFOLIO):
+            # supprimer fichiers associés
             for f in PORTFOLIO[idx].get("fichiers", []):
                 try:
                     os.remove(os.path.join(UPLOAD_FOLDER, f))
                 except:
                     pass
             PORTFOLIO.pop(idx)
+            flash("Élément portfolio supprimé.", "info")
+        else:
+            flash("Index invalide pour suppression.", "danger")
         return redirect(url_for('admin_portfolio'))
+    # Pré-remplir si édition
+    projet_to_edit = None
+    if edit_idx and edit_idx.isdigit():
+        idx = int(edit_idx)
+        if 0 <= idx < len(PORTFOLIO):
+            projet_to_edit = PORTFOLIO[idx]
+        else:
+            flash("Index invalide pour édition.", "warning")
     content = """
     <div class="admin-nav text-center mb-3">
       <a href="{{ url_for('admin') }}">Accueil admin</a> |
       <a href="{{ url_for('admin_portfolio') }}">Portfolio</a>
     </div>
     <div class="admin-panel">
-      <h5>Réalisations du portfolio</h5>
-      <table class="table admin-table">
-        <tr><th>#</th><th>Français</th><th>English</th><th>Description FR</th><th>Description EN</th><th>Images</th><th>Fichiers</th><th></th></tr>
+      <h5>Gestion du Portfolio</h5>
+      {% if portfolio %}
+      <table class="table table-hover admin-table">
+        <thead>
+          <tr><th>#</th><th>FR</th><th>EN</th><th>Images (URLs)</th><th>Fichiers joints</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
         {% for proj in portfolio %}
           <tr>
             <td>{{ loop.index0 }}</td>
             <td>{{ proj.titre['fr'] }}</td>
             <td>{{ proj.titre['en'] }}</td>
-            <td>{{ proj.desc['fr'] }}</td>
-            <td>{{ proj.desc['en'] }}</td>
             <td>
-                {% for img in proj.imgs %}
-                  <img src="{{ img }}" style="width:45px;height:32px;object-fit:cover;margin-right:3px;border-radius:6px;">
-                {% endfor %}
+              {% for img in proj.imgs %}
+                <span class="badge bg-secondary text-truncate" style="max-width: 100px;">{{ img }}</span><br>
+              {% endfor %}
             </td>
             <td>
-                {% for f in proj.fichiers %}
-                  <a href="{{ url_for('uploaded_file', filename=f) }}" class="badge badge-file" target="_blank">{{ f }}</a>
-                {% endfor %}
+              {% for f in proj.fichiers %}
+                <a href="{{ url_for('uploaded_file', filename=f) }}" class="badge bg-info text-dark" target="_blank">{{ f }}</a><br>
+              {% endfor %}
             </td>
-            <td><a href="?del={{ loop.index0 }}" class="btn btn-danger btn-sm" onclick="return confirm('{{ 'Supprimer ce projet ?' if lang=='fr' else 'Delete this item?' }}');">Suppr.</a></td>
+            <td>
+              <a href="{{ url_for('admin_portfolio', edit=loop.index0) }}" class="btn btn-sm btn-primary">Éditer</a>
+              <a href="{{ url_for('admin_portfolio', del=loop.index0) }}" class="btn btn-sm btn-danger" onclick="return confirm('Supprimer cet élément?');">Suppr.</a>
+            </td>
           </tr>
         {% endfor %}
+        </tbody>
       </table>
+      {% else %}
+        <p>Aucun élément dans le portfolio.</p>
+      {% endif %}
       <hr>
-      <form method="post" class="row g-2" enctype="multipart/form-data">
-        <div class="col-md-2"><input type="text" name="titre_fr" class="form-control" placeholder="Titre FR" required></div>
-        <div class="col-md-2"><input type="text" name="titre_en" class="form-control" placeholder="Title EN" required></div>
-        <div class="col-md-2"><input type="text" name="desc_fr" class="form-control" placeholder="Description FR" required></div>
-        <div class="col-md-2"><input type="text" name="desc_en" class="form-control" placeholder="Description EN" required></div>
-        <div class="col-md-2"><input type="text" name="imgs" class="form-control" placeholder="URLs images, virgule"></div>
-        <div class="col-md-1"><input type="file" name="fichiers" class="form-control" multiple></div>
-        <div class="col-md-1"><button class="btn btn-contact w-100" type="submit">Ajouter</button></div>
+      <h6>{{ 'Modifier l’élément' if projet_to_edit else 'Ajouter un nouvel élément' }}</h6>
+      <form method="post" enctype="multipart/form-data" class="row g-2">
+        <input type="hidden" name="edit_idx" value="{{ request.args.get('edit') if projet_to_edit is not none else '' }}">
+        <div class="col-md-3"><input type="text" name="titre_fr" value="{{ projet_to_edit.titre['fr'] if projet_to_edit }}" class="form-control" placeholder="Titre FR" required></div>
+        <div class="col-md-3"><input type="text" name="titre_en" value="{{ projet_to_edit.titre['en'] if projet_to_edit }}" class="form-control" placeholder="Titre EN" required></div>
+        <div class="col-md-3"><input type="text" name="desc_fr" value="{{ projet_to_edit.desc['fr'] if projet_to_edit }}" class="form-control" placeholder="Description FR" required></div>
+        <div class="col-md-3"><input type="text" name="desc_en" value="{{ projet_to_edit.desc['en'] if projet_to_edit }}" class="form-control" placeholder="Description EN" required></div>
+        <div class="col-md-4"><input type="text" name="imgs" value="{{ projet_to_edit.imgs|join(', ') if projet_to_edit }}" class="form-control" placeholder="URLs images, séparées par virgule"></div>
+        <div class="col-md-4"><input type="file" name="fichiers" class="form-control" multiple></div>
+        <div class="col-md-2"><button class="btn btn-contact w-100" type="submit">{{ 'Mettre à jour' if projet_to_edit else 'Ajouter' }}</button></div>
       </form>
-      <div class="small mt-1">Pour images, colle des URLs (ex: https://...img1.jpg, https://...img2.jpg)</div>
+      <div class="small mt-1">Pour images, coller des URLs (ex: https://...jpg), séparées par virgule.</div>
     </div>
     """
-    return render(content, portfolio=PORTFOLIO, page="admin_portfolio")
+    return render(content, portfolio=PORTFOLIO, projet_to_edit=projet_to_edit)
 
-# --- Gestion des atouts / arguments via admin ---
+# --- Gestion des atouts / arguments via admin (CRUD complet) ---
 @app.route(f'/{ADMIN_SECRET_URL}/atouts', methods=["GET", "POST"])
 def admin_atouts():
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
+    edit_idx = request.args.get("edit")
+    # POST: création ou mise à jour
     if request.method == "POST":
-        at_fr = request.form.get("atout_fr")
-        at_en = request.form.get("atout_en")
+        at_fr = request.form.get("atout_fr", "").strip()
+        at_en = request.form.get("atout_en", "").strip()
         if at_fr and at_en:
-            ATOUTS.append({"fr": at_fr, "en": at_en})
+            if request.form.get("edit_idx") and request.form.get("edit_idx").isdigit():
+                idx = int(request.form.get("edit_idx"))
+                if 0 <= idx < len(ATOUTS):
+                    ATOUTS[idx] = {"fr": at_fr, "en": at_en}
+                    flash("Argument mis à jour.", "success")
+                else:
+                    flash("Index invalide pour mise à jour.", "danger")
+            else:
+                ATOUTS.append({"fr": at_fr, "en": at_en})
+                flash("Nouvel argument ajouté.", "success")
+        else:
+            flash("Les deux champs (FR et EN) sont requis.", "warning")
+        return redirect(url_for('admin_atouts'))
+    # Suppression
     delid = request.args.get("del")
     if delid and delid.isdigit():
         idx = int(delid)
         if 0 <= idx < len(ATOUTS):
             ATOUTS.pop(idx)
+            flash("Argument supprimé.", "info")
+        else:
+            flash("Index invalide pour suppression.", "danger")
         return redirect(url_for('admin_atouts'))
+    # Pré-remplir si édition
+    atout_to_edit = None
+    if edit_idx and edit_idx.isdigit():
+        idx = int(edit_idx)
+        if 0 <= idx < len(ATOUTS):
+            atout_to_edit = ATOUTS[idx]
+        else:
+            flash("Index invalide pour édition.", "warning")
     content = """
     <div class="admin-nav text-center mb-3">
       <a href="{{ url_for('admin') }}">Accueil admin</a> |
       <a href="{{ url_for('admin_atouts') }}">Pourquoi moi</a>
     </div>
     <div class="admin-panel">
-      <h5>Arguments / Pourquoi me confier votre projet</h5>
-      <ul>
+      <h5>Gestion des Atouts / Arguments</h5>
+      {% if atouts %}
+      <ul class="list-group mb-3">
         {% for at in atouts %}
-        <li class="mb-2">
-          <b>FR :</b> {{ at['fr'] }} <br><b>EN :</b> {{ at['en'] }}
-          <a href="?del={{ loop.index0 }}" class="btn btn-danger btn-sm ms-2">Suppr.</a>
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <div>
+            <b>FR :</b> {{ at['fr'] }}<br><b>EN :</b> {{ at['en'] }}
+          </div>
+          <div>
+            <a href="{{ url_for('admin_atouts', edit=loop.index0) }}" class="btn btn-sm btn-primary">Éditer</a>
+            <a href="{{ url_for('admin_atouts', del=loop.index0) }}" class="btn btn-sm btn-danger" onclick="return confirm('Supprimer cet argument?');">Suppr.</a>
+          </div>
         </li>
         {% endfor %}
       </ul>
+      {% else %}
+        <p>Aucun argument défini.</p>
+      {% endif %}
+      <hr>
+      <h6>{{ 'Modifier l’argument' if atout_to_edit else 'Ajouter un nouvel argument' }}</h6>
       <form method="post" class="row g-2">
-        <div class="col-md-5"><input type="text" name="atout_fr" class="form-control" placeholder="Argument FR" required></div>
-        <div class="col-md-5"><input type="text" name="atout_en" class="form-control" placeholder="Argument EN" required></div>
-        <div class="col-md-2"><button class="btn btn-contact w-100" type="submit">Ajouter</button></div>
+        <input type="hidden" name="edit_idx" value="{{ request.args.get('edit') if atout_to_edit is not none else '' }}">
+        <div class="col-md-5"><input type="text" name="atout_fr" value="{{ atout_to_edit.fr if atout_to_edit }}" class="form-control" placeholder="Argument FR" required></div>
+        <div class="col-md-5"><input type="text" name="atout_en" value="{{ atout_to_edit.en if atout_to_edit }}" class="form-control" placeholder="Argument EN" required></div>
+        <div class="col-md-2"><button class="btn btn-contact w-100" type="submit">{{ 'Mettre à jour' if atout_to_edit else 'Ajouter' }}</button></div>
       </form>
     </div>
     """
-    return render(content, atouts=ATOUTS, page="admin_atouts")
+    return render(content, atouts=ATOUTS, atout_to_edit=atout_to_edit)
 
 # --- Gestion des messages reçus via admin, avec options avancées ---
 @app.route(f'/{ADMIN_SECRET_URL}/messages', methods=["GET", "POST"])
+@app.route(f'/{ADMIN_SECRET_URL}/messages/')  # prise en charge avec slash terminal
 def admin_messages():
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     action = request.args.get("action")
     idx_param = request.args.get("idx")
@@ -935,6 +1086,7 @@ def admin_messages():
             current = MSGS[idx].get("status", "new")
             MSGS[idx]["status"] = "read" if current == "new" else "new"
             save_json_file(MSG_FILE, MSGS)
+            flash("Statut du message modifié.", "success")
         return redirect(url_for('admin_messages', filter=filter_param, search=search_q, page=page))
 
     # Suppression
@@ -948,6 +1100,9 @@ def admin_messages():
                     pass
             MSGS.pop(idx)
             save_json_file(MSG_FILE, MSGS)
+            flash("Message supprimé.", "info")
+        else:
+            flash("Index invalide pour suppression de message.", "danger")
         return redirect(url_for('admin_messages', filter=filter_param, search=search_q, page=page))
 
     def matches(msg):
@@ -973,20 +1128,21 @@ def admin_messages():
     </div>
     <div class="admin-panel">
       <h5>Messages reçus via le formulaire</h5>
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <div>
+      <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap">
+        <div class="mb-2">
           <a href="{{ url_for('admin_messages') }}" class="btn btn-sm btn-outline-primary {% if not filter_param %}active{% endif %}">Tous</a>
           <a href="{{ url_for('admin_messages', filter='new') }}" class="btn btn-sm btn-outline-primary {% if filter_param=='new' %}active{% endif %}">{{ 'Non lus' if lang=='fr' else 'Unread' }}</a>
         </div>
-        <form method="get" class="d-flex">
+        <form method="get" class="d-flex mb-2">
           <input type="hidden" name="filter" value="{{ filter_param or '' }}">
           <input type="text" name="search" value="{{ search_q }}" class="form-control form-control-sm" placeholder="{{ 'Recherche...' if lang=='fr' else 'Search...' }}">
           <button type="submit" class="btn btn-sm btn-primary ms-1">{{ 'Rechercher' if lang=='fr' else 'Search' }}</button>
         </form>
-        <a href="{{ url_for('export_messages') }}" class="btn btn-sm btn-primary">{{ 'Exporter JSON' if lang=='fr' else 'Export JSON' }}</a>
+        <a href="{{ url_for('export_messages') }}" class="btn btn-sm btn-primary mb-2">{{ 'Exporter JSON' if lang=='fr' else 'Export JSON' }}</a>
       </div>
       {% if paginated %}
-      <table class="table admin-table">
+      <table class="table table-hover admin-table">
+        <thead>
         <tr>
           <th>#</th>
           <th>{{ 'Nom' if lang=='fr' else 'Name' }}</th>
@@ -997,6 +1153,8 @@ def admin_messages():
           <th>{{ 'Fichiers' if lang=='fr' else 'Files' }}</th>
           <th>{{ 'Actions' if lang=='fr' else 'Actions' }}</th>
         </tr>
+        </thead>
+        <tbody>
         {% for msg in paginated %}
           {% set idx = MSGS.index(msg) %}
           <tr {% if msg.status=='new' %}class="table-warning"{% endif %}>
@@ -1008,7 +1166,7 @@ def admin_messages():
                 <a href="mailto:{{ msg.email }}" title="{{ 'Répondre' if lang=='fr' else 'Reply' }}" class="btn btn-sm btn-outline-primary ms-1"><i class="bi bi-envelope"></i></a>
               {% endif %}
             </td>
-            <td>{{ msg.projet }}</td>
+            <td>{{ msg.projet[:30] }}{% if msg.projet|length > 30 %}...{% endif %}</td>
             <td>{{ msg.timestamp }}</td>
             <td>
               {% if msg.status=='new' %}
@@ -1019,27 +1177,29 @@ def admin_messages():
             </td>
             <td>
               {% if msg.fichiers %}
-                {% for f in msg.fichiers %}
-                  <a href="{{ url_for('uploaded_file', filename=f) }}" class="badge badge-file" target="_blank">{{ f }}</a>
-                {% endfor %}
+                <span class="text-primary">{{ msg.fichiers|length }}</span>
               {% else %}
                 <span class="text-muted">-</span>
               {% endif %}
             </td>
             <td>
-              <a href="{{ url_for('admin_messages', action='toggle', idx=idx, filter=filter_param, search=search_q, page=page) }}" class="btn btn-sm btn-secondary">
-                {% if msg.status=='new' %}{{ 'Marquer comme lu' if lang=='fr' else 'Mark as read' }}{% else %}{{ 'Marquer non lu' if lang=='fr' else 'Mark as unread' }}{% endif %}
+              <!-- Bouton Voir le détail -->
+              <a href="{{ url_for('view_message', idx=idx) }}" class="btn btn-sm btn-primary">Voir</a>
+              <!-- Toggle lu/non lu -->
+              <a href="{{ url_for('admin_messages', action='toggle', idx=idx, filter=filter_param, search=search_q, page=page) }}" class="btn btn-sm btn-secondary ms-1">
+                {% if msg.status=='new' %}{{ 'Marquer lu' if lang=='fr' else 'Mark read' }}{% else %}{{ 'Marquer non lu' if lang=='fr' else 'Mark unread' }}{% endif %}
               </a>
               {% if msg.fichiers %}
-              <a href="{{ url_for('download_attachments', idx=idx) }}" class="btn btn-sm btn-info ms-1">{{ 'Télécharger pièces' if lang=='fr' else 'Download files' }}</a>
+              <a href="{{ url_for('download_attachments', idx=idx) }}" class="btn btn-sm btn-info ms-1">{{ 'Télécharger' if lang=='fr' else 'Download' }}</a>
               {% endif %}
-              <a href="{{ url_for('admin_messages', del=idx, filter=filter_param, search=search_q, page=page) }}" class="btn btn-sm btn-danger ms-1" onclick="return confirm('{{ 'Supprimer ce message ?' if lang=='fr' else 'Delete this message?' }}');">{{ 'Suppr.' if lang=='fr' else 'Delete' }}</a>
+              <a href="{{ url_for('admin_messages', del=idx, filter=filter_param, search=search_q, page=page) }}" class="btn btn-sm btn-danger ms-1" onclick="return confirm('Supprimer ce message?');">{{ 'Suppr.' if lang=='fr' else 'Delete' }}</a>
             </td>
           </tr>
         {% endfor %}
+        </tbody>
       </table>
       <nav>
-        <ul class="pagination">
+        <ul class="pagination justify-content-center">
           {% if page>1 %}
           <li class="page-item"><a class="page-link" href="{{ url_for('admin_messages', filter=filter_param, search=search_q, page=page-1) }}">&laquo;</a></li>
           {% else %}
@@ -1063,7 +1223,6 @@ def admin_messages():
     </div>
     """
     return render(content,
-                  msgs=MSGS,
                   page="admin_messages",
                   filter_param=filter_param,
                   search_q=search_q,
@@ -1071,14 +1230,90 @@ def admin_messages():
                   total_pages=total_pages,
                   MSGS=MSGS)
 
+# Route détail message
+@app.route(f'/{ADMIN_SECRET_URL}/messages/view/<int:idx>', methods=['GET', 'POST'])
+def view_message(idx):
+    if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
+        return redirect(url_for('admin'))
+    if not (0 <= idx < len(MSGS)):
+        flash("Index de message invalide.", "danger")
+        return redirect(url_for('admin_messages'))
+    msg = MSGS[idx]
+    # Si admin clique sur form pour toggler le statut
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "toggle_status":
+            current = msg.get("status", "new")
+            msg["status"] = "read" if current == "new" else "new"
+            save_json_file(MSG_FILE, MSGS)
+            flash("Statut mis à jour.", "success")
+        return redirect(url_for('view_message', idx=idx))
+    lang = get_lang()
+    content = """
+    <div class="admin-nav text-center mb-3">
+      <a href="{{ url_for('admin') }}">Accueil admin</a> |
+      <a href="{{ url_for('admin_messages') }}">Messages reçus</a> |
+      <a href="{{ url_for('view_message', idx=idx) }}">{{ 'Détail' if lang=='fr' else 'Detail' }}</a>
+    </div>
+    <div class="admin-panel">
+      <h5>{{ 'Détail du message' if lang=='fr' else 'Message Detail' }} ({{ idx }})</h5>
+      <p><strong>{{ 'Nom / Société:' if lang=='fr' else 'Name / Company:' }}</strong> {{ msg.nom }}</p>
+      <p><strong>{{ 'Email / WhatsApp:' if lang=='fr' else 'Email / WhatsApp:' }}</strong>
+        {% if msg.email %}
+          <a href="mailto:{{ msg.email }}">{{ msg.email }}</a>
+        {% else %}
+          -
+        {% endif %}
+      </p>
+      <p><strong>{{ 'Projet / Besoin:' if lang=='fr' else 'Project / Need:' }}</strong><br>{{ msg.projet }}</p>
+      <p><strong>{{ 'Timestamp:' if lang=='fr' else 'Timestamp:' }}</strong> {{ msg.timestamp }}</p>
+      <p><strong>{{ 'Statut:' if lang=='fr' else 'Status:' }}</strong>
+        {% if msg.status=='new' %}
+          <span class="badge bg-warning text-dark">{{ 'Non lu' if lang=='fr' else 'New' }}</span>
+        {% else %}
+          <span class="badge bg-success">{{ 'Lu' if lang=='fr' else 'Read' }}</span>
+        {% endif %}
+      </p>
+      <p><strong>{{ 'Fichiers joints:' if lang=='fr' else 'Attached files:' }}</strong>
+        {% if msg.fichiers %}
+          <ul>
+            {% for f in msg.fichiers %}
+              <li><a href="{{ url_for('uploaded_file', filename=f) }}" target="_blank">{{ f }}</a></li>
+            {% endfor %}
+          </ul>
+          <a href="{{ url_for('download_attachments', idx=idx) }}" class="btn btn-info btn-sm">{{ 'Télécharger tous' if lang=='fr' else 'Download all' }}</a>
+        {% else %}
+          <span class="text-muted">-</span>
+        {% endif %}
+      </p>
+      <form method="post" class="mt-3">
+        <input type="hidden" name="action" value="toggle_status">
+        <button type="submit" class="btn btn-secondary btn-sm">
+          {% if msg.status=='new' %}
+            {{ 'Marquer comme lu' if lang=='fr' else 'Mark as read' }}
+          {% else %}
+            {{ 'Marquer non lu' if lang=='fr' else 'Mark as unread' }}
+          {% endif %}
+        </button>
+      </form>
+      <div class="mt-3">
+        <a href="{{ url_for('admin_messages') }}" class="btn btn-primary btn-sm">{{ 'Retour à la liste' if lang=='fr' else 'Back to list' }}</a>
+      </div>
+    </div>
+    """
+    return render(content, idx=idx, msg=msg, lang=lang)
+
 @app.route(f'/{ADMIN_SECRET_URL}/messages/download/<int:idx>')
 def download_attachments(idx):
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     if 0 <= idx < len(MSGS):
         fichiers = MSGS[idx].get("fichiers", [])
         if not fichiers:
-            return "Aucun fichier à télécharger.", 404
+            flash("Aucun fichier à télécharger.", "warning")
+            return redirect(url_for('view_message', idx=idx))
         memory_file = io.BytesIO()
         with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
             for filename in fichiers:
@@ -1089,11 +1324,13 @@ def download_attachments(idx):
         timestamp = MSGS[idx].get("timestamp", "").replace(":", "-").replace(" ", "_")
         zip_name = f"message_{idx}_{timestamp}.zip" if timestamp else f"message_{idx}.zip"
         return send_file(memory_file, download_name=zip_name, as_attachment=True)
-    return "Index de message invalide.", 404
+    flash("Index de message invalide.", "danger")
+    return redirect(url_for('admin_messages'))
 
 @app.route(f'/{ADMIN_SECRET_URL}/messages/export')
 def export_messages():
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     if os.path.exists(MSG_FILE):
         return send_file(MSG_FILE, as_attachment=True)
@@ -1109,6 +1346,7 @@ def export_messages():
 @app.route(f'/{ADMIN_SECRET_URL}/analytics')
 def admin_analytics():
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     counts = {}
     for m in MSGS:
@@ -1158,6 +1396,7 @@ def admin_analytics():
 @app.route(f'/{ADMIN_SECRET_URL}/download_uploads')
 def download_all_uploads():
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1176,6 +1415,7 @@ def download_all_uploads():
 @app.route(f'/{ADMIN_SECRET_URL}/traffic')
 def admin_traffic():
     if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     agg = {}
     for entry in TRAFFIC:
@@ -1207,8 +1447,9 @@ def admin_traffic():
       <h5>Tableau du trafic</h5>
       <p><b>{{ 'Enregistrements total' if lang=='fr' else 'Total records' }}:</b> {{ total }}</p>
       {% if page_rows %}
-      <table class="table admin-table">
-        <tr><th>{{ 'Date' if lang=='fr' else 'Date' }}</th><th>{{ 'Chemin' if lang=='fr' else 'Path' }}</th><th>{{ 'Visites' if lang=='fr' else 'Visits' }}</th></tr>
+      <table class="table table-hover admin-table">
+        <thead><tr><th>{{ 'Date' if lang=='fr' else 'Date' }}</th><th>{{ 'Chemin' if lang=='fr' else 'Path' }}</th><th>{{ 'Visites' if lang=='fr' else 'Visits' }}</th></tr></thead>
+        <tbody>
         {% for row in page_rows %}
         <tr>
           <td>{{ row.date }}</td>
@@ -1216,6 +1457,7 @@ def admin_traffic():
           <td>{{ row.count }}</td>
         </tr>
         {% endfor %}
+        </tbody>
       </table>
       <nav>
         <ul class="pagination justify-content-center">
@@ -1282,6 +1524,11 @@ def favicon():
 # Lancement de l'application
 # ----------------------------------------
 if __name__ == '__main__':
+    # Pour debug, vous pouvez afficher la liste des routes :
+    # with app.test_request_context():
+    #     print("Routes disponibles :")
+    #     for rule in app.url_map.iter_rules():
+    #         print(rule)
     port = int(os.environ.get("PORT", 5000))
     host = "0.0.0.0"
     debug_env = os.environ.get("DEBUG", "False").lower() in ("true", "1", "yes")
