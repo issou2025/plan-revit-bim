@@ -4,18 +4,15 @@ import io
 import json
 import zipfile
 import logging
-import smtplib
 from datetime import datetime
-from email.message import EmailMessage
 from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory, send_file, abort, flash
-
 from werkzeug.utils import secure_filename
 
 # ----------------------------------------
 # Configuration de base
 # ----------------------------------------
 app = Flask(__name__)
-# En production, définissez SECRET_KEY via variable d'environnement pour sécurité
+# En production, définir SECRET_KEY via variable d'environnement pour sécurité
 app.secret_key = os.environ.get("SECRET_KEY", "super_secret_key_2024")
 
 # Dossier des uploads
@@ -25,9 +22,14 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Fichiers de persistance
 MSG_FILE = "messages.json"
 TRAFFIC_FILE = "traffic.json"
+ROTATOR_FILE = "rotator.json"  # Pour stocker la liste des fichiers du carousel
 
-# Autorisations d'extensions upload
+# Autorisations d'extensions upload (images et PDF pour le carousel, plus autres pour contact)
 ALLOWED_EXTENSIONS = {"pdf", "dwg", "rvt", "docx", "xlsx", "jpg", "jpeg", "png", "gif", "zip"}
+
+# Définit parmi ALLOWED_EXTENSIONS celles qu'on considère comme images pour carousel
+IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif"}
+PDF_EXTENSIONS = {"pdf"}
 
 # Fichier de logs
 LOG_FILE = "app.log"
@@ -67,7 +69,7 @@ def save_json_file(path, data):
     except Exception as e:
         logging.error(f"Erreur écriture {path}: {e}")
 
-# Charger au démarrage
+# Charger les données persistantes au démarrage
 MSGS = load_json_file(MSG_FILE)
 # Assurer champ status et timestamp si manquants
 for m in MSGS:
@@ -77,7 +79,10 @@ for m in MSGS:
         m['timestamp'] = ""
 
 TRAFFIC = load_json_file(TRAFFIC_FILE)
-# TRAFFIC entries: dicts {"timestamp": "YYYY-MM-DD HH:MM:SS", "path": "/...", "method": "GET", "remote_addr": "IP"}
+
+# Charger la liste du carousel (rotator)
+ROTATOR_ITEMS = load_json_file(ROTATOR_FILE)
+# Chaque élément de ROTATOR_ITEMS est un dict: {"filename": "...", "type": "image" ou "pdf"}
 
 # ----------------------------------------
 # Données dynamiques du site
@@ -93,7 +98,7 @@ SITE = {
         "en": "Have a project? Entrust it to a passionate professional."
     },
     "photo": "https://randomuser.me/api/portraits/men/75.jpg",
-    "email": "entreprise2rc@gmail.com",  # Adresse utilisée pour notifications email
+    "email": "entreprise2rc@gmail.com",  # Toujours stocké, mais non utilisé pour SMTP
     "tel": "+227 96 38 08 77",
     "whatsapp": "+227 96 38 08 77",
     "linkedin": "https://www.linkedin.com/in/issoufou-chefou",
@@ -110,7 +115,6 @@ SITE = {
 }
 ANNEE = 2025
 
-# Structures initiales : Services, Portfolio, Atouts
 SERVICES = [
     {"titre": {"fr": "Plans d’armatures Revit", "en": "Rebar plans (Revit)"},
      "desc": {"fr": "Plans d’armatures clairs et complets pour béton armé.",
@@ -166,46 +170,22 @@ ATOUTS = [
 # ----------------------------------------
 ADMIN_USER = "bacseried@gmail.com"
 ADMIN_PASS = "mx23fy"
-ADMIN_SECRET_URL = "issoufouachraf_2025"  # À adapter si vous voulez un autre chemin
+ADMIN_SECRET_URL = "issoufouachraf_2025"  # À adapter si nécessaire
 LANGS = {"fr": "Français", "en": "English"}
 
 # ----------------------------------------
-# Configuration SMTP pour notifications email
+# Fonction stub pour notification (sans SMTP)
 # ----------------------------------------
-MAIL_SERVER = os.environ.get("MAIL_SERVER")
-MAIL_PORT = int(os.environ.get("MAIL_PORT", 0)) if os.environ.get("MAIL_PORT") else None
-MAIL_USERNAME = os.environ.get("MAIL_USERNAME")
-MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
-MAIL_USE_TLS = os.environ.get("MAIL_USE_TLS", "False").lower() in ("true", "1", "yes")
-MAIL_FROM = os.environ.get("MAIL_FROM", MAIL_USERNAME)
-MAIL_TO = os.environ.get("MAIL_TO", SITE.get("email"))
-
 def send_email_notification(subject: str, body: str):
-    """Envoie un email si configuration SMTP présente."""
-    if not (MAIL_SERVER and MAIL_PORT and MAIL_USERNAME and MAIL_PASSWORD and MAIL_TO):
-        logging.info("SMTP non configuré, email non envoyé.")
-        return
-    try:
-        msg = EmailMessage()
-        msg['Subject'] = subject
-        msg['From'] = MAIL_FROM
-        msg['To'] = MAIL_TO
-        msg.set_content(body)
-        server = smtplib.SMTP(MAIL_SERVER, MAIL_PORT, timeout=10)
-        if MAIL_USE_TLS:
-            server.starttls()
-        server.login(MAIL_USERNAME, MAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        logging.info("Notification email envoyée.")
-    except Exception as e:
-        logging.error(f"Erreur envoi email: {e}")
+    """
+    Stub: ne fait que logger. Ne tente plus d'envoyer d'email.
+    """
+    logging.info(f"[Notification stub] Sujet: {subject} | Corps: {body}")
+    # Pas d'envoi SMTP
 
 # ----------------------------------------
 # Template HTML de base (BASE)
 # ----------------------------------------
-# Utilise Bootstrap 5.3, icônes Bootstrap Icons.
-# Inclut la gestion des flashs et un drag-drop simplifié.
 BASE = """
 <!DOCTYPE html>
 <html lang="{{ lang }}">
@@ -235,23 +215,38 @@ BASE = """
         .nav-link.active { color:#ffd600!important; font-weight:bold; }
         .lang-select { margin-left:1.1em; }
         .dark-toggle { cursor: pointer; color: #fff; margin-left: 1rem; }
-        /* Hero section */
+        /* Hero / Carousel */
         .hero {
-            background: linear-gradient(105deg,{{ site.couleur }} 60%, #43e3ff 100%), url('https://images.unsplash.com/photo-1581091870627-3fd7fddc9575?auto=format&fit=crop&w=1350&q=80') no-repeat center/cover;
-            color: #fff; padding: 80px 0 60px 0;
-            border-radius: 0 0 36px 36px;
-            margin-bottom:32px; text-shadow: 1px 1px 8px #0008;
-            box-shadow:0 4px 20px #0006; position: relative;
+            position: relative;
+            text-align: center;
+            color: #fff;
         }
-        .hero::before {
-            content: "";
-            position: absolute; top:0; left:0; width:100%; height:100%;
-            background: rgba(0,0,0,0.4); border-radius: 0 0 36px 36px;
-        }
-        .hero .hero-content { position: relative; z-index: 1; }
         .hero img {
             width: 140px; border-radius: 100px; margin-bottom: 15px;
             border: 3px solid #ffd600; box-shadow:0 4px 16px #0008;
+        }
+        /* Pour carousel: on limitera la taille des images/PDF */
+        .carousel-item {
+            text-align: center;
+        }
+        .carousel-item img {
+            /* Taille moyenne : on fixe hauteur max et largeur auto, centré */
+            max-height: 400px;
+            width: auto;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .carousel-item .pdf-embed {
+            /* Embed PDF centré, taille modérée */
+            max-width: 80%;
+            height: 400px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .carousel-caption {
+            background: rgba(0,0,0,0.4);
+            border-radius: 10px;
+            padding: 10px;
         }
         .btn-contact, .btn-projet, .btn-admin {
             background: #ffd600; color: #24315e; font-weight:bold; border-radius:13px;
@@ -327,9 +322,14 @@ BASE = """
         .table-warning { background-color: #fff3cd !important; }
         @media (max-width:600px) {
             html { font-size:15px; }
-            .hero { padding: 40px 0 30px 0; }
+            .hero, .carousel { padding: 40px 0 30px 0; }
             .project-cta { padding:7px 3px; }
             .admin-panel { padding:7px 1px; }
+            /* Pour mobile, réduire hauteur carousel */
+            .carousel-item img, .carousel-item .pdf-embed {
+                max-height: 250px;
+                height: auto;
+            }
         }
     </style>
 </head>
@@ -498,7 +498,53 @@ def set_lang():
 @app.route('/')
 def index():
     lang = get_lang()
+    # Construire la partie carousel si ROTATOR_ITEMS non vide
+    carousel_content = ""
+    if ROTATOR_ITEMS:
+        # Bootstrap carousel avec intervalle automatique (p.ex. 5000ms)
+        carousel_content += """
+        <div id="homepageCarousel" class="carousel slide mb-4" data-bs-ride="carousel" data-bs-interval="5000">
+          <div class="carousel-indicators">
+        """
+        for idx in range(len(ROTATOR_ITEMS)):
+            active = "active" if idx == 0 else ""
+            aria_current = ' aria-current="true"' if idx == 0 else ""
+            carousel_content += f'<button type="button" data-bs-target="#homepageCarousel" data-bs-slide-to="{idx}" class="{active}"{aria_current} aria-label="Slide {idx+1}"></button>'
+        carousel_content += "</div><div class=\"carousel-inner\">"
+        for idx, item in enumerate(ROTATOR_ITEMS):
+            active = "active" if idx == 0 else ""
+            filename = item.get("filename")
+            ftype = item.get("type")
+            file_url = url_for('uploaded_file', filename=filename)
+            carousel_content += f'<div class="carousel-item {active}">'
+            if ftype == "image":
+                # Afficher l'image en taille moyenne, centrée
+                carousel_content += f'<img src="{file_url}" class="d-block" alt="Carousel image {idx+1}">'
+            elif ftype == "pdf":
+                # Afficher un embed PDF dans taille modérée
+                carousel_content += f'''
+                <div class="d-flex justify-content-center">
+                  <object data="{file_url}" type="application/pdf" class="pdf-embed">
+                    <p>Votre navigateur ne supporte pas l'affichage intégré du PDF.
+                       <a href="{file_url}" target="_blank">Télécharger le PDF</a>.</p>
+                  </object>
+                </div>
+                '''
+            carousel_content += "</div>"
+        carousel_content += """
+          <button class="carousel-control-prev" type="button" data-bs-target="#homepageCarousel" data-bs-slide="prev">
+            <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+            <span class="visually-hidden">Précédent</span>
+          </button>
+          <button class="carousel-control-next" type="button" data-bs-target="#homepageCarousel" data-bs-slide="next">
+            <span class="carousel-control-next-icon" aria-hidden="true"></span>
+            <span class="visually-hidden">Suivant</span>
+          </button>
+        </div>
+        """
+    # Contenu principal de la page
     content = f"""
+    {carousel_content}
     <div class="hero text-center">
       <div class="hero-content">
         <img src="{{{{ site.photo }}}}" alt="portrait {{{{ site.nom }}}}">
@@ -587,6 +633,7 @@ def pourquoi():
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
+    # Sert les fichiers uploadés (images, pdf, etc.)
     return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
 
 @app.route('/contact', methods=['GET', 'POST'])
@@ -619,7 +666,7 @@ def contact():
         }
         MSGS.append(new_msg)
         save_json_file(MSG_FILE, MSGS)
-        # Notification email si configuré
+        # Notification stub (log uniquement)
         subject = f"Nouveau message de {nom}"
         body = f"Nom: {nom}\nEmail: {email}\nProjet: {projet}\nTimestamp: {new_msg['timestamp']}\nFichiers: {', '.join(fichiers) if fichiers else 'aucun'}"
         send_email_notification(subject, body)
@@ -694,13 +741,14 @@ def admin():
         </div>
         """
         return render(login, titre_page="Connexion admin", page="admin_login")
-    # Dashboard admin avec analytics et traffic
+    # Dashboard admin
     total_msgs = len(MSGS)
     unread_msgs = sum(1 for m in MSGS if m.get("status") == "new")
     total_services = len(SERVICES)
     total_portfolio = len(PORTFOLIO)
     total_atouts = len(ATOUTS)
     total_traffic = len(TRAFFIC)
+    total_rotator = len(ROTATOR_ITEMS)
     today = datetime.now().strftime("%Y-%m-%d")
     visits_today = sum(1 for t in TRAFFIC if t.get("timestamp", "").startswith(today))
     content = """
@@ -710,6 +758,7 @@ def admin():
       <a href="{{ url_for('admin_portfolio') }}">Portfolio</a> |
       <a href="{{ url_for('admin_atouts') }}">Pourquoi moi</a> |
       <a href="{{ url_for('admin_messages') }}">Messages reçus{% if unread_msgs>0 %} ({{ unread_msgs }}){% endif %}</a> |
+      <a href="{{ url_for('admin_carousel') }}">Tour de rôle ({{ total_rotator }})</a> |
       <a href="{{ url_for('admin_analytics') }}">Analytics</a> |
       <a href="{{ url_for('admin_traffic') }}">Traffic</a> |
       <a href="{{ url_for('download_all_uploads') }}">Télécharger Uploads</a> |
@@ -724,6 +773,7 @@ def admin():
         <div class="col-md-3"><div class="card text-center mb-3"><div class="card-body"><h5>{{ total_msgs }}</h5><p>Messages ({{ unread_msgs }} non lus)</p></div></div></div>
       </div>
       <p><strong>Visites totales :</strong> {{ total_traffic }}, <strong>Aujourd'hui :</strong> {{ visits_today }}</p>
+      <p><strong>Items Tour de rôle :</strong> {{ total_rotator }} (max 6)</p>
     </div>
     """
     return render(content,
@@ -735,7 +785,8 @@ def admin():
                   total_portfolio=total_portfolio,
                   total_atouts=total_atouts,
                   total_traffic=total_traffic,
-                  visits_today=visits_today)
+                  visits_today=visits_today,
+                  total_rotator=total_rotator)
 
 @app.route(f'/{ADMIN_SECRET_URL}/logout')
 def admin_logout():
@@ -749,7 +800,6 @@ def admin_services():
     if not admin_logged_in():
         flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
-    # GET param edit: index à éditer
     edit_idx = request.args.get("edit")
     # POST: création ou mise à jour
     if request.method == "POST":
@@ -798,7 +848,6 @@ def admin_services():
             service_to_edit = SERVICES[idx]
         else:
             flash("Index invalide pour édition.", "warning")
-    # Rendu template
     content = """
     <div class="admin-nav text-center mb-3">
       <a href="{{ url_for('admin') }}">Accueil admin</a> |
@@ -853,7 +902,6 @@ def admin_portfolio():
         flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     edit_idx = request.args.get("edit")
-    # POST: création ou mise à jour
     if request.method == "POST":
         titre_fr = request.form.get("titre_fr", "").strip()
         titre_en = request.form.get("titre_en", "").strip()
@@ -904,7 +952,6 @@ def admin_portfolio():
     if delid and delid.isdigit():
         idx = int(delid)
         if 0 <= idx < len(PORTFOLIO):
-            # supprimer fichiers associés
             for f in PORTFOLIO[idx].get("fichiers", []):
                 try:
                     os.remove(os.path.join(UPLOAD_FOLDER, f))
@@ -986,7 +1033,6 @@ def admin_atouts():
         flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
         return redirect(url_for('admin'))
     edit_idx = request.args.get("edit")
-    # POST: création ou mise à jour
     if request.method == "POST":
         at_fr = request.form.get("atout_fr", "").strip()
         at_en = request.form.get("atout_en", "").strip()
@@ -1240,7 +1286,6 @@ def view_message(idx):
         flash("Index de message invalide.", "danger")
         return redirect(url_for('admin_messages'))
     msg = MSGS[idx]
-    # Si admin clique sur form pour toggler le statut
     if request.method == "POST":
         action = request.form.get("action")
         if action == "toggle_status":
@@ -1339,6 +1384,146 @@ def export_messages():
         'Content-Type': 'application/json',
         'Content-Disposition': 'attachment; filename="messages.json"'
     })
+
+# ----------------------------------------
+# Gestion du carousel (“Tour de rôle”) via admin
+# ----------------------------------------
+@app.route(f'/{ADMIN_SECRET_URL}/carousel', methods=["GET", "POST"])
+def admin_carousel():
+    """
+    Permet à l'admin d'ajouter jusqu'à 6 fichiers (images ou PDF) pour la page d'accueil en rotation.
+    On peut uploader, supprimer, réordonner.
+    """
+    if not admin_logged_in():
+        flash("Veuillez vous connecter pour accéder au panneau admin.", "warning")
+        return redirect(url_for('admin'))
+    # GET params for action: del, move
+    # Suppression
+    delid = request.args.get("del")
+    if delid and delid.isdigit():
+        idx = int(delid)
+        if 0 <= idx < len(ROTATOR_ITEMS):
+            # supprimer le fichier physiquement
+            filename = ROTATOR_ITEMS[idx].get("filename")
+            try:
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            except:
+                pass
+            ROTATOR_ITEMS.pop(idx)
+            save_json_file(ROTATOR_FILE, ROTATOR_ITEMS)
+            flash("Item supprimé du carousel.", "info")
+        else:
+            flash("Index invalide pour suppression.", "danger")
+        return redirect(url_for('admin_carousel'))
+    # Réordonner: move up/down
+    move = request.args.get("move")  # 'up' ou 'down'
+    idx_param = request.args.get("idx")
+    if move and idx_param and idx_param.isdigit():
+        idx = int(idx_param)
+        if 0 <= idx < len(ROTATOR_ITEMS):
+            if move == "up" and idx > 0:
+                ROTATOR_ITEMS[idx-1], ROTATOR_ITEMS[idx] = ROTATOR_ITEMS[idx], ROTATOR_ITEMS[idx-1]
+                save_json_file(ROTATOR_FILE, ROTATOR_ITEMS)
+                flash("Item déplacé vers le haut.", "success")
+            elif move == "down" and idx < len(ROTATOR_ITEMS)-1:
+                ROTATOR_ITEMS[idx+1], ROTATOR_ITEMS[idx] = ROTATOR_ITEMS[idx], ROTATOR_ITEMS[idx+1]
+                save_json_file(ROTATOR_FILE, ROTATOR_ITEMS)
+                flash("Item déplacé vers le bas.", "success")
+        return redirect(url_for('admin_carousel'))
+    # Upload d'un nouveau fichier
+    if request.method == "POST":
+        if len(ROTATOR_ITEMS) >= 6:
+            flash("Limite atteinte: maximum 6 items autorisés.", "warning")
+            return redirect(url_for('admin_carousel'))
+        file = request.files.get("file")
+        if not file or file.filename == "":
+            flash("Aucun fichier sélectionné.", "warning")
+            return redirect(url_for('admin_carousel'))
+        if file and allowed_file(file.filename):
+            ext = file.filename.rsplit('.', 1)[1].lower()
+            # Accepter uniquement images ou PDF pour carousel
+            if ext not in IMAGE_EXTENSIONS.union(PDF_EXTENSIONS):
+                flash("Type de fichier non pris en charge pour le carousel (seulement images ou PDF).", "danger")
+                return redirect(url_for('admin_carousel'))
+            # Sauvegarde
+            filename = secure_filename(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}")
+            filepath = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(filepath)
+            ftype = "image" if ext in IMAGE_EXTENSIONS else "pdf"
+            ROTATOR_ITEMS.append({"filename": filename, "type": ftype})
+            save_json_file(ROTATOR_FILE, ROTATOR_ITEMS)
+            flash("Fichier ajouté au carousel.", "success")
+        else:
+            flash("Fichier non valide.", "danger")
+        return redirect(url_for('admin_carousel'))
+    # Affichage de la page de gestion du carousel
+    # Construire la liste des items existants avec aperçu
+    lang = get_lang()
+    content = """
+    <div class="admin-nav text-center mb-3">
+      <a href="{{ url_for('admin') }}">Accueil admin</a> |
+      <a href="{{ url_for('admin_carousel') }}">Tour de rôle</a>
+    </div>
+    <div class="admin-panel">
+      <h5>Gestion du Tour de rôle (Carousel page d'accueil)</h5>
+      <p>Nombre d'items actuels: {{ items|length }} / 6</p>
+      {% if items %}
+      <div class="table-responsive">
+      <table class="table table-hover admin-table align-middle">
+        <thead>
+          <tr><th>#</th><th>Aperçu</th><th>Nom du fichier</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+        {% for item in items %}
+          <tr>
+            <td>{{ loop.index0 }}</td>
+            <td>
+              {% if item.type=='image' %}
+                <img src="{{ url_for('uploaded_file', filename=item.filename) }}" alt="img" style="max-height:80px;">
+              {% elif item.type=='pdf' %}
+                <i class="bi bi-file-earmark-pdf-fill" style="font-size:2rem;color:#dc3545;"></i>
+              {% endif %}
+            </td>
+            <td style="max-width:200px; word-break:break-all;">{{ item.filename }}</td>
+            <td>
+              {% if not loop.first %}
+                <a href="{{ url_for('admin_carousel', move='up', idx=loop.index0) }}" class="btn btn-sm btn-secondary">↑</a>
+              {% else %}
+                <button class="btn btn-sm btn-secondary" disabled>↑</button>
+              {% endif %}
+              {% if not loop.last %}
+                <a href="{{ url_for('admin_carousel', move='down', idx=loop.index0) }}" class="btn btn-sm btn-secondary">↓</a>
+              {% else %}
+                <button class="btn btn-sm btn-secondary" disabled>↓</button>
+              {% endif %}
+              <a href="{{ url_for('admin_carousel', del=loop.index0) }}" class="btn btn-sm btn-danger" onclick="return confirm('Supprimer cet item?');">Suppr.</a>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+        <p>Aucun item dans le carousel.</p>
+      {% endif %}
+      <hr>
+      {% if items|length < 6 %}
+      <h6>Ajouter un nouvel item</h6>
+      <form method="post" enctype="multipart/form-data" class="row g-2 align-items-center">
+        <div class="col-auto">
+          <input type="file" name="file" class="form-control" accept=".jpg,.jpeg,.png,.gif,.pdf" required>
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-contact" type="submit">{{ 'Ajouter' if lang=='fr' else 'Add' }}</button>
+        </div>
+      </form>
+      <div class="small mt-1">{{ 'Formats acceptés: jpg, jpeg, png, gif, pdf. Maximum 6 items.' if lang=='fr' else 'Accepted formats: jpg, jpeg, png, gif, pdf. Up to 6 items.' }}</div>
+      {% else %}
+      <div class="alert alert-info">{{ 'Limite atteinte: 6 items. Supprimez-en avant d’ajouter.' if lang=='fr' else 'Limit reached: 6 items. Remove some before adding.' }}</div>
+      {% endif %}
+    </div>
+    """
+    return render(content, items=ROTATOR_ITEMS)
 
 # ----------------------------------------
 # Analytics route
@@ -1524,7 +1709,7 @@ def favicon():
 # Lancement de l'application
 # ----------------------------------------
 if __name__ == '__main__':
-    # Pour debug, vous pouvez afficher la liste des routes :
+    # Pour debug, vous pouvez afficher la liste des routes au démarrage :
     # with app.test_request_context():
     #     print("Routes disponibles :")
     #     for rule in app.url_map.iter_rules():
@@ -1532,5 +1717,4 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     host = "0.0.0.0"
     debug_env = os.environ.get("DEBUG", "False").lower() in ("true", "1", "yes")
-    # En production, DEBUG=False par défaut
     app.run(host=host, port=port, debug=debug_env)
