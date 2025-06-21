@@ -154,10 +154,15 @@ if not isinstance(ROTATOR_ITEMS, list):
 
 # Config thème (dict)
 config_theme = load_json_file(CONFIG_FILE, expect_dict=True)
-default_color = "#FF6F61"
+# Valeurs par défaut si non présentes
+default_color = "#E91E63"     # magenta vif par défaut
+default_secondary = "#FF5722" # orange vif
+default_accent = "#4CAF50"    # vert vif
 default_font = "Montserrat"
 default_photo = "https://randomuser.me/api/portraits/men/75.jpg"
 theme_color = config_theme.get("couleur", default_color)
+theme_secondary = config_theme.get("secondary", default_secondary)
+theme_accent = config_theme.get("accent", default_accent)
 theme_font = config_theme.get("font", default_font)
 theme_photo = config_theme.get("photo", default_photo)
 
@@ -181,7 +186,8 @@ SITE = {
     "email": "entreprise2rc@gmail.com",
     "tel": "+227 96 38 08 77",
     "whatsapp": "+227 96 38 08 77",
-    "linkedin": "https://www.linkedin.com/in/issoufou-chefou",
+    # Mise à jour du lien LinkedIn selon votre indication :
+    "linkedin": "https://www.linkedin.com/in/abdou-chefou-issoufou-99555684",
     "adresse": {
         "fr": "Niamey, Niger (disponible à l'international)",
         "en": "Niamey, Niger (available internationally)"
@@ -191,6 +197,8 @@ SITE = {
         "en": "Monday–Saturday: 8AM – 7PM (GMT+1)"
     },
     "couleur": theme_color,
+    "secondary": theme_secondary,
+    "accent": theme_accent,
     "font": theme_font
 }
 ANNEE = datetime.now().year
@@ -555,7 +563,7 @@ def admin_messages():
     per_page = 10
     search = request.args.get("search","").strip().lower()
     if search:
-        filtered = [m for m in MSGS if search in m.get("nom","").lower() 
+        filtered = [m for m in MSGS if search in m.get("nom","").lower()
                      or search in m.get("email","").lower()
                      or search in m.get("sujet","").lower()]
     else:
@@ -901,6 +909,7 @@ def sitemap():
 # DÉFINITION DES TEMPLATES INLINE (DictLoader)
 # ----------------------------------------
 # Pour rester en single-file, on stocke tous les templates Jinja dans un dict.
+# Le CSS est retravaillé pour des couleurs vives et alternances de sections.
 base_template = """
 <!DOCTYPE html>
 <html lang="{{ lang }}">
@@ -922,23 +931,22 @@ base_template = """
     <style>
         /* Palette vive via variables CSS */
         :root {
-            --color-primary: {{ site.couleur }};
-            --color-secondary: #6B5B95;
-            --color-accent: #FFC107;
-            --color-success: #28A745;
-            --color-info: #17A2B8;
-            --color-warning: #FD7E14;
-            --color-danger: #DC3545;
-            --bg-light: #FDFDFD;
-            --bg-dark: #1C1C1C;
-            --text-light: #FFFFFF;
-            --text-dark: #212529;
-            --card-bg-light: #FFFFFF;
-            --card-bg-alt: #F0F4FC;
-            --card-bg-dark: #242424;
-            --gradient-primary: linear-gradient(135deg, {{ site.couleur }}, #FF9472);
-            --gradient-secondary: linear-gradient(135deg, #6B5B95, #8A76B5);
-            --gradient-accent: linear-gradient(135deg, #FFC107, #FFE082);
+            --color-primary: {{ site.couleur }};           /* magenta vif ou valeur admin */
+            --color-secondary: {{ site.secondary }};       /* orange vif ou valeur admin */
+            --color-accent: {{ site.accent }};             /* vert vif ou valeur admin */
+            --color-alt1: #FFF3E0;   /* pastel pêche clair pour alternance */
+            --color-alt2: #E8F5E9;   /* pastel vert clair */
+            --color-alt3: #E3F2FD;   /* pastel bleu clair */
+            --bg-light: #FAFAFA;     /* fond clair */
+            --bg-dark: #121212;      /* fond sombre plus doux */
+            --text-dark: #212121;    /* texte sombre */
+            --text-light: #F5F5F5;   /* texte clair */
+            --card-bg-light: #FFFFFF;/* carte en mode clair */
+            --card-bg-alt: #F1F1F1;  /* alternatif clair */
+            --card-bg-dark: #1E1E1E; /* carte en mode sombre */
+            --gradient-primary: linear-gradient(135deg, {{ site.couleur }}, {{ site.secondary }}); 
+            --gradient-secondary: linear-gradient(135deg, {{ site.secondary }}, {{ site.accent }});
+            --gradient-accent: linear-gradient(135deg, {{ site.accent }}, {{ site.couleur }});
             --font-family: '{{ site.font }}', Arial, sans-serif;
         }
         body {
@@ -984,7 +992,7 @@ base_template = """
             color: var(--text-light);
             padding: 80px 0;
             background:
-                linear-gradient(135deg, rgba(255,111,97,0.8), rgba(255,148,114,0.8)),
+                linear-gradient(135deg, rgba(233,30,99,0.8), rgba(255,87,34,0.8)),
                 url('{{ site.photo }}') center/cover no-repeat;
         }
         .hero img {
@@ -1005,7 +1013,7 @@ base_template = """
             border-radius: 30px;
             padding: 12px 30px;
             font-size: 1.1rem;
-            background: var(--color-primary);
+            background: var(--color-secondary);
             color: #fff;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             transition: transform 0.2s, box-shadow 0.2s;
@@ -1013,7 +1021,7 @@ base_template = """
         .hero .btn-contact:hover {
             transform: translateY(-2px);
             box-shadow: 0 6px 16px rgba(0,0,0,0.4);
-            background: var(--color-secondary);
+            background: var(--color-accent);
         }
         /* Section titles */
         .section-title {
@@ -1043,6 +1051,7 @@ base_template = """
             margin-bottom:20px;
             box-shadow:0 2px 14px rgba(0,0,0,0.1);
             transition: transform 0.3s, box-shadow 0.3s, background 0.3s;
+            border-top: 4px solid var(--color-primary);
         }
         .service-card:hover {
             transform: translateY(-6px);
@@ -1051,7 +1060,7 @@ base_template = """
         }
         .service-card i {
             font-size:2.4rem;
-            color: var(--color-primary);
+            color: var(--color-secondary);
             margin-bottom:12px;
         }
         body.dark-mode .service-card {
@@ -1059,7 +1068,7 @@ base_template = """
             color: var(--text-light);
         }
         body.dark-mode .service-card:hover {
-            background: #333;
+            background: #2a2a2a;
         }
         /* Portfolio */
         .card-portfolio {
@@ -1071,6 +1080,7 @@ base_template = """
             color: var(--text-dark);
             box-shadow:0 2px 12px rgba(0,0,0,0.1);
             margin-bottom: 24px;
+            border-left: 4px solid var(--color-secondary);
         }
         .card-portfolio:hover {
             transform: translateY(-6px);
@@ -1100,6 +1110,7 @@ base_template = """
             width: 300px;
             display: flex;
             flex-direction: column;
+            border-top: 4px solid var(--color-accent);
         }
         .gallery-item:hover {
             transform: translateY(-4px);
@@ -1132,10 +1143,10 @@ base_template = """
         /* Viewer 360° */
         .rotation-viewer {
             width: 100%;
-            /* La hauteur peut être fixée ou responsive ; on garde un ratio 1:1 ou ajustable */
             aspect-ratio: 1 / 1;
             background: #f2f2f2;
             position: relative;
+            border: 2px solid var(--color-primary);
         }
         /* Footer */
         .footer { background: var(--bg-dark); color: #fff; padding: 30px 0; margin-top: 0; }
@@ -1311,12 +1322,10 @@ base_template = """
       if (Array.isArray(frames) && frames.length>0) {
         // Taille du conteneur
         let width = $el.width();
-        // On peut ajuster height ou garder square via CSS aspect-ratio
         SpriteSpin.create({
           container: $el,
           source: frames,
           width: width,
-          // height sera automatique si aspect-ratio est supporté ; sinon fixez height égal à width
           height: width,
           frames: frames.length,
           sense: -1,
@@ -1355,7 +1364,7 @@ index_template = """
           <img src="{{ url_for('uploaded_file', filename=item.filename) }}" class="d-block w-100" alt="Carousel item" style="max-height:400px; object-fit:cover;">
         {% else %}
           <div class="d-flex justify-content-center align-items-center" style="height:400px; background:#f2f2f2;">
-            <i class="bi bi-file-earmark-pdf-fill" style="font-size:3rem; color:var(--color-danger);"></i>
+            <i class="bi bi-file-earmark-pdf-fill" style="font-size:3rem;color:var(--color-secondary);"></i>
             <span class="ms-2">{{ item.filename }}</span>
           </div>
         {% endif %}
@@ -1844,7 +1853,7 @@ admin_carousel_template = """
           {% if item.type=='image' %}
             <img src="{{ url_for('uploaded_file', filename=item.filename) }}" alt="img" style="max-height:80px;">
           {% elif item.type=='pdf' %}
-            <i class="bi bi-file-earmark-pdf-fill" style="font-size:2rem;color:var(--color-danger);"></i>
+            <i class="bi bi-file-earmark-pdf-fill" style="font-size:2rem;color:var(--color-secondary);"></i>
           {% endif %}
         </td>
         <td style="max-width:200px; word-break:break-all;">{{ item.filename }}</td>
@@ -2019,6 +2028,14 @@ admin_settings_template = """
       <input type="text" class="form-control" id="couleur" name="couleur" value="{{ site.couleur }}" placeholder="#RRGGBB" required>
     </div>
     <div class="col-md-4">
+      <label for="secondary" class="form-label">{{ 'Couleur secondaire (hex)' if lang=='fr' else 'Secondary color (hex)' }}</label>
+      <input type="text" class="form-control" id="secondary" name="secondary" value="{{ site.secondary }}" placeholder="#RRGGBB">
+    </div>
+    <div class="col-md-4">
+      <label for="accent" class="form-label">{{ 'Couleur accent (hex)' if lang=='fr' else 'Accent color (hex)' }}</label>
+      <input type="text" class="form-control" id="accent" name="accent" value="{{ site.accent }}" placeholder="#RRGGBB">
+    </div>
+    <div class="col-md-4">
       <label for="font" class="form-label">{{ 'Police (Google Font ou locale)' if lang=='fr' else 'Font (Google Font or local)' }}</label>
       <input type="text" class="form-control" id="font" name="font" value="{{ site.font }}" placeholder="Montserrat">
     </div>
@@ -2136,10 +2153,12 @@ def admin_settings():
     if request.method == "POST":
         changed = False
         nouvelle_couleur = request.form.get("couleur","").strip()
+        nouvelle_secondary = request.form.get("secondary","").strip()
+        nouvelle_accent = request.form.get("accent","").strip()
         nouvelle_font = request.form.get("font","").strip()
         nouvelle_photo_url = request.form.get("photo_url","").strip()
         photo_file = request.files.get("photo_file")
-        # Couleur
+        # Couleur principale
         if nouvelle_couleur:
             if nouvelle_couleur.startswith("#") and len(nouvelle_couleur)==7:
                 SITE["couleur"] = nouvelle_couleur
@@ -2147,6 +2166,22 @@ def admin_settings():
                 changed = True
             else:
                 flash("Format de couleur invalide. Utilisez #RRGGBB.", "warning")
+        # Couleur secondaire
+        if nouvelle_secondary:
+            if nouvelle_secondary.startswith("#") and len(nouvelle_secondary)==7:
+                SITE["secondary"] = nouvelle_secondary
+                config_theme["secondary"] = nouvelle_secondary
+                changed = True
+            else:
+                flash("Format de couleur secondaire invalide. Utilisez #RRGGBB.", "warning")
+        # Couleur accent
+        if nouvelle_accent:
+            if nouvelle_accent.startswith("#") and len(nouvelle_accent)==7:
+                SITE["accent"] = nouvelle_accent
+                config_theme["accent"] = nouvelle_accent
+                changed = True
+            else:
+                flash("Format de couleur accent invalide. Utilisez #RRGGBB.", "warning")
         # Font
         if nouvelle_font:
             SITE["font"] = nouvelle_font
