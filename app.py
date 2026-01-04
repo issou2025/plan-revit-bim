@@ -1,4 +1,20 @@
 # -*- coding: utf-8 -*-
+"""
+Plan Revit BIM - Professional Portfolio Website
+================================================
+
+A bilingual (French/English) Flask-based portfolio website for a Civil Engineer 
+and BIM Specialist. Features include:
+- Service showcase
+- Portfolio gallery with carousel and 360° rotation views
+- Contact form with file uploads
+- Admin dashboard for content management
+- Theme customization
+- Traffic analytics
+
+Author: Issoufou Abdou Chefou
+Email: entreprise2rc@gmail.com
+"""
 import os
 import io
 import json
@@ -14,24 +30,24 @@ from jinja2 import DictLoader
 from functools import wraps
 
 # ----------------------------------------
-# CONFIGURATION DE BASE
+# BASE CONFIGURATION
 # ----------------------------------------
-# Dossier pour stocker uploads et JSON persistants
+# Directory for storing uploads and persistent JSON files
 UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "uploads")
-# Chemins JSON
+# JSON file paths
 MSG_FILE = os.environ.get("MSG_FILE_PATH", os.path.join(UPLOAD_FOLDER, "messages.json"))
 TRAFFIC_FILE = os.environ.get("TRAFFIC_FILE_PATH", os.path.join(UPLOAD_FOLDER, "traffic.json"))
 ROTATOR_FILE = os.environ.get("ROTATOR_FILE_PATH", os.path.join(UPLOAD_FOLDER, "rotator.json"))
 CONFIG_FILE = os.environ.get("CONFIG_FILE_PATH", os.path.join(UPLOAD_FOLDER, "config.json"))
 GALLERY_FILE = os.environ.get("GALLERY_FILE_PATH", os.path.join(UPLOAD_FOLDER, "gallery.json"))
 
-# Admin credentials (à sécuriser via variables d’environnement en production)
+# Admin credentials (MUST be secured via environment variables in production)
 ADMIN_USER = os.environ.get("ADMIN_USER", "bacseried@gmail.com")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "mx23fy")
-# URL secret pour l’admin (changer en production)
+# Secret URL for admin access (MUST be changed in production)
 ADMIN_SECRET_URL = os.environ.get("ADMIN_SECRET_URL", "issoufouachraf_2025")
 
-# Extensions autorisées pour upload
+# Allowed file extensions for upload
 ALLOWED_EXTENSIONS = {"pdf", "dwg", "rvt", "docx", "xlsx", "jpg", "jpeg", "png", "gif", "zip",
                       "mp4", "webm", "ogg"}
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif"}
@@ -40,7 +56,7 @@ VIDEO_EXTENSIONS = {"mp4", "webm", "ogg"}
 
 # Application Flask
 app = Flask(__name__)
-# Clé secrète pour session/flash (à personnaliser en production)
+# Secret key for sessions/flash messages (MUST be customized in production)
 app.secret_key = os.environ.get("SECRET_KEY", "super_secret_key_2024")
 
 # Logging
@@ -55,15 +71,30 @@ logging.basicConfig(
 )
 
 # ----------------------------------------
-# FONCTIONS UTILITAIRES
+# UTILITY FUNCTIONS
 # ----------------------------------------
 def allowed_file(filename):
+    """
+    Check if a filename has an allowed extension.
+    
+    Args:
+        filename (str): The filename to check
+        
+    Returns:
+        bool: True if the file extension is allowed, False otherwise
+    """
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def load_json_file(path, expect_dict=False):
     """
-    Charge un fichier JSON. Si absent ou invalide, crée un fichier par défaut ([] ou {}).
-    expect_dict=True pour un dict, sinon pour une liste.
+    Load a JSON file. If missing or invalid, create a default file ([] or {}).
+    
+    Args:
+        path (str): Path to the JSON file
+        expect_dict (bool): True for dict return type, False for list (default)
+        
+    Returns:
+        dict or list: Loaded data or empty dict/list if file doesn't exist
     """
     if os.path.exists(path):
         try:
@@ -73,32 +104,36 @@ def load_json_file(path, expect_dict=False):
                     if isinstance(data, dict):
                         return data
                     else:
-                        logging.warning(f"{path} n'est pas un dict JSON, réinitialisation.")
+                        logging.warning(f"{path} is not a JSON dict, reinitializing.")
                 else:
                     if isinstance(data, list):
                         return data
                     else:
-                        logging.warning(f"{path} ne contient pas une liste JSON, réinitialisation.")
+                        logging.warning(f"{path} does not contain a JSON list, reinitializing.")
         except Exception as e:
-            logging.error(f"Erreur lecture {path}: {e}. Réinitialisation.")
-    # Création du dossier parent si besoin
+            logging.error(f"Error reading {path}: {e}. Reinitializing.")
+    # Create parent directory if needed
     parent = os.path.dirname(path)
     if parent and not os.path.exists(parent):
         try:
             os.makedirs(parent, exist_ok=True)
         except Exception as e:
-            logging.error(f"Impossible de créer dossier parent {parent}: {e}")
+            logging.error(f"Unable to create parent directory {parent}: {e}")
     default = {} if expect_dict else []
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(default, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        logging.error(f"Erreur création initiale de {path}: {e}")
+        logging.error(f"Error creating initial file {path}: {e}")
     return default
 
 def save_json_file(path, data):
     """
-    Sauvegarde data dans path. Crée les dossiers parents si besoin.
+    Save data to a JSON file. Creates parent directories if needed.
+    
+    Args:
+        path (str): Path where the JSON file will be saved
+        data (dict or list): Data to save
     """
     try:
         parent = os.path.dirname(path)
@@ -107,15 +142,22 @@ def save_json_file(path, data):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        logging.error(f"Erreur écriture {path}: {e}")
+        logging.error(f"Error writing {path}: {e}")
 
 def send_email_notification(subject: str, body: str):
-    # Stub d'envoi d’e-mail : à remplacer par implémentation pro si nécessaire
-    logging.info(f"[Notification stub] Sujet: {subject} | Corps: {body}")
+    # Stub for email sending: replace with production implementation if necessary
+    logging.info(f"[Notification stub] Subject: {subject} | Body: {body}")
 
 def admin_login_required(f):
     """
-    Décorateur pour protéger les routes admin.
+    Decorator to protect admin routes.
+    Redirects to login page if user is not authenticated.
+    
+    Args:
+        f (function): The route function to protect
+        
+    Returns:
+        function: Wrapped function with authentication check
     """
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -131,7 +173,7 @@ def admin_login_required(f):
 # Création dossier d’uploads si nécessaire
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Messages de contact
+# Contact messages
 MSGS = load_json_file(MSG_FILE, expect_dict=False)
 if isinstance(MSGS, list):
     for m in MSGS:
@@ -142,7 +184,7 @@ if isinstance(MSGS, list):
 else:
     MSGS = []
 
-# Trafic logs
+# Traffic logs
 TRAFFIC = load_json_file(TRAFFIC_FILE, expect_dict=False)
 if not isinstance(TRAFFIC, list):
     TRAFFIC = []
@@ -166,12 +208,12 @@ theme_accent = config_theme.get("accent", default_accent)
 theme_font = config_theme.get("font", default_font)
 theme_photo = config_theme.get("photo", default_photo)
 
-# Galerie items
+# Gallery items
 GALLERY_ITEMS = load_json_file(GALLERY_FILE, expect_dict=False)
 if not isinstance(GALLERY_ITEMS, list):
     GALLERY_ITEMS = []
 
-# Variables globales du site
+# Global site variables
 SITE = {
     "nom": "Issoufou Abdou Chefou",
     "titre": {
@@ -186,7 +228,7 @@ SITE = {
     "email": "entreprise2rc@gmail.com",
     "tel": "+227 96 38 08 77",
     "whatsapp": "+227 96 38 08 77",
-    # Mise à jour du lien LinkedIn selon votre indication :
+    # Updated LinkedIn link as per your indication:
     "linkedin": "https://www.linkedin.com/in/abdou-chefou-issoufou-99555684",
     "adresse": {
         "fr": "Niamey, Niger (disponible à l'international)",
@@ -203,7 +245,7 @@ SITE = {
 }
 ANNEE = datetime.now().year
 
-# Services initiaux
+# Initial services
 SERVICES = [
     {"titre": {"fr": "Plans d'armatures Revit", "en": "Rebar plans (Revit)"},
      "desc": {"fr": "Plans d'armatures clairs et complets pour béton armé.",
@@ -227,7 +269,7 @@ SERVICES = [
      "icon": "bi-person-video3"},
 ]
 
-# Portfolio initial
+# Initial portfolio
 PORTFOLIO = [
     {
         "titre": {"fr": "Résidence de standing (Niamey)", "en": "Premium Residence (Niamey)"},
@@ -240,7 +282,7 @@ PORTFOLIO = [
     }
 ]
 
-# Atouts initiaux
+# Initial advantages/strengths
 ATOUTS = [
     {"fr": "7 ans d'expérience sur des projets variés en Afrique et à l'international.",
      "en": "7 years of experience with varied projects in Africa and abroad."},
@@ -257,7 +299,7 @@ ATOUTS = [
 ]
 
 # ----------------------------------------
-# INJECTION DE VARIABLES GLOBALES DANS JINJA
+# INJECT GLOBAL VARIABLES INTO JINJA
 # ----------------------------------------
 @app.context_processor
 def inject_global_vars():
@@ -275,7 +317,7 @@ def inject_global_vars():
     }
 
 # ----------------------------------------
-# LOGGING DU TRAFIC (GET/POST) pour analytics
+# TRAFFIC LOGGING (GET/POST) for analytics
 # ----------------------------------------
 @app.before_request
 def log_traffic():
@@ -294,7 +336,7 @@ def log_traffic():
         save_json_file(TRAFFIC_FILE, TRAFFIC)
 
 # ----------------------------------------
-# GESTION DE LA LANGUE
+# LANGUAGE MANAGEMENT
 # ----------------------------------------
 @app.route('/set_lang', methods=["POST"])
 def set_lang():
@@ -312,7 +354,7 @@ def toggle_dark():
     return redirect(request.referrer or url_for('index'))
 
 # ----------------------------------------
-# ROUTES PUBLIQUES
+# PUBLIC ROUTES
 # ----------------------------------------
 @app.route('/')
 def index():
@@ -396,7 +438,7 @@ def admin_logout():
     return redirect(url_for('admin_login'))
 
 # ----------------------------------------
-# ROUTES ADMIN (protégées)
+# ADMIN ROUTES (protected)
 # ----------------------------------------
 @app.route(f'/{ADMIN_SECRET_URL}')
 @admin_login_required
@@ -420,7 +462,7 @@ def admin_index():
                            total_traffic=total_traffic,
                            titre_page="Admin Dashboard")
 
-# --- Gestion Services ---
+# --- Service Management ---
 @app.route(f'/{ADMIN_SECRET_URL}/services', methods=["GET", "POST"])
 @admin_login_required
 def admin_services():
@@ -461,7 +503,7 @@ def admin_services_delete(idx):
         flash("Index invalide.", "danger")
     return redirect(url_for('admin_services'))
 
-# --- Gestion Portfolio ---
+# --- Portfolio Management ---
 @app.route(f'/{ADMIN_SECRET_URL}/portfolio', methods=["GET", "POST"])
 @admin_login_required
 def admin_portfolio():
@@ -519,7 +561,7 @@ def admin_portfolio_delete(idx):
         flash("Index invalide.", "danger")
     return redirect(url_for('admin_portfolio'))
 
-# --- Gestion Atouts ---
+# --- Advantages Management ---
 @app.route(f'/{ADMIN_SECRET_URL}/atouts', methods=["GET", "POST"])
 @admin_login_required
 def admin_atouts():
@@ -555,7 +597,7 @@ def admin_atouts_delete(idx):
         flash("Index invalide.", "danger")
     return redirect(url_for('admin_atouts'))
 
-# --- Gestion Messages ---
+# --- Message Management ---
 @app.route(f'/{ADMIN_SECRET_URL}/messages', methods=["GET"])
 @admin_login_required
 def admin_messages():
@@ -600,7 +642,7 @@ def view_message(idx):
             return redirect(url_for('admin_messages'))
     return render_template("admin/message_view.html", msg=msg, idx=idx, titre_page="Voir Message")
 
-# --- Gestion Carousel ---
+# --- Carousel Management ---
 @app.route(f'/{ADMIN_SECRET_URL}/carousel', methods=["GET", "POST"])
 @admin_login_required
 def admin_carousel():
@@ -663,7 +705,7 @@ def admin_carousel():
         return redirect(url_for('admin_carousel'))
     return render_template("admin/carousel.html", titre_page="Gestion Carousel")
 
-# --- Gestion Galerie (avec vues tournantes) ---
+# --- Gallery Management (with rotation views) ---
 @app.route(f'/{ADMIN_SECRET_URL}/gallery', methods=["GET", "POST"])
 @admin_login_required
 def admin_gallery():
@@ -712,7 +754,7 @@ def admin_gallery():
         files = request.files.getlist("files")  # multiple upload
         added = False
 
-        # Cas 1 : plusieurs fichiers uploadés => rotation
+        # Case 1: Multiple uploaded files => rotation
         valid_images = []
         for file in files:
             if file and file.filename:
@@ -730,7 +772,7 @@ def admin_gallery():
                 else:
                     flash(f"Fichier non autorisé: {file.filename}", "warning")
         if len(valid_images) > 1:
-            # Crée un item rotation
+            # Create a rotation item
             GALLERY_ITEMS.append({
                 "type": "rotation",
                 "frames": valid_images,
@@ -739,7 +781,7 @@ def admin_gallery():
             })
             added = True
         elif len(valid_images) == 1 and not url_input:
-            # Un seul fichier image uploadé => item image classique
+            # Single uploaded image file => classic image item
             GALLERY_ITEMS.append({
                 "type": "image",
                 "source": valid_images[0],
@@ -748,9 +790,9 @@ def admin_gallery():
             })
             added = True
         else:
-            # Cas URL input
+            # URL input case
             if url_input:
-                # Si plusieurs URLs séparées par virgule => rotation
+                # If multiple URLs separated by comma => rotation
                 urls = [u.strip() for u in url_input.split(",") if u.strip()]
                 if len(urls) > 1:
                     valid_urls = []
@@ -772,7 +814,7 @@ def admin_gallery():
                         })
                         added = True
                     elif len(valid_urls) == 1:
-                        # Cas improbable : une URL unique => traiter plus bas
+                        # Unlikely case: single URL => handle below
                         single_url = valid_urls[0]
                         GALLERY_ITEMS.append({
                             "type": "image",
@@ -782,7 +824,7 @@ def admin_gallery():
                         })
                         added = True
                 else:
-                    # Une seule URL => image ou vidéo
+                    # Single URL => image or video
                     u = urls[0]
                     if u.startswith("http://") or u.startswith("https://"):
                         ext = u.rsplit('.', 1)[-1].lower()
@@ -807,7 +849,7 @@ def admin_gallery():
                     else:
                         flash("URL invalide. Doit commencer par http:// ou https://", "warning")
             else:
-                # Ni fichiers uploadés, ni URL => rien à faire
+                # Neither uploaded files nor URL => nothing to do
                 if not valid_images:
                     flash("Veuillez fournir des fichiers ou des URLs pour la galerie.", "warning")
 
@@ -906,10 +948,10 @@ def sitemap():
     return response
 
 # ----------------------------------------
-# DÉFINITION DES TEMPLATES INLINE (DictLoader)
+# INLINE TEMPLATE DEFINITIONS (DictLoader)
 # ----------------------------------------
-# Pour rester en single-file, on stocke tous les templates Jinja dans un dict.
-# Le CSS est retravaillé pour des couleurs vives et alternances de sections.
+# To maintain a single-file structure, we store all Jinja templates in a dict.
+# CSS is styled for vibrant colors and alternating sections.
 base_template = """
 <!DOCTYPE html>
 <html lang="{{ lang }}">
@@ -2144,7 +2186,7 @@ template_dict = {
 app.jinja_loader = DictLoader(template_dict)
 
 # ----------------------------------------
-# ROUTE ADMIN SETTINGS (après loader)
+# ADMIN SETTINGS ROUTE (after loader)
 # ----------------------------------------
 @app.route(f'/{ADMIN_SECRET_URL}/settings', methods=['GET', 'POST'])
 @admin_login_required
