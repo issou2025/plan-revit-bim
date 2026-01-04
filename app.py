@@ -41,10 +41,10 @@ ROTATOR_FILE = os.environ.get("ROTATOR_FILE_PATH", os.path.join(UPLOAD_FOLDER, "
 CONFIG_FILE = os.environ.get("CONFIG_FILE_PATH", os.path.join(UPLOAD_FOLDER, "config.json"))
 GALLERY_FILE = os.environ.get("GALLERY_FILE_PATH", os.path.join(UPLOAD_FOLDER, "gallery.json"))
 
-# Admin credentials (à sécuriser via variables d’environnement en production)
+# Admin credentials (MUST be secured via environment variables in production)
 ADMIN_USER = os.environ.get("ADMIN_USER", "bacseried@gmail.com")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "mx23fy")
-# URL secret pour l’admin (changer en production)
+# Secret URL for admin access (MUST be changed in production)
 ADMIN_SECRET_URL = os.environ.get("ADMIN_SECRET_URL", "issoufouachraf_2025")
 
 # Allowed file extensions for upload
@@ -104,27 +104,27 @@ def load_json_file(path, expect_dict=False):
                     if isinstance(data, dict):
                         return data
                     else:
-                        logging.warning(f"{path} n'est pas un dict JSON, réinitialisation.")
+                        logging.warning(f"{path} is not a JSON dict, reinitializing.")
                 else:
                     if isinstance(data, list):
                         return data
                     else:
-                        logging.warning(f"{path} ne contient pas une liste JSON, réinitialisation.")
+                        logging.warning(f"{path} does not contain a JSON list, reinitializing.")
         except Exception as e:
-            logging.error(f"Erreur lecture {path}: {e}. Réinitialisation.")
-    # Création du dossier parent si besoin
+            logging.error(f"Error reading {path}: {e}. Reinitializing.")
+    # Create parent directory if needed
     parent = os.path.dirname(path)
     if parent and not os.path.exists(parent):
         try:
             os.makedirs(parent, exist_ok=True)
         except Exception as e:
-            logging.error(f"Impossible de créer dossier parent {parent}: {e}")
+            logging.error(f"Unable to create parent directory {parent}: {e}")
     default = {} if expect_dict else []
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(default, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        logging.error(f"Erreur création initiale de {path}: {e}")
+        logging.error(f"Error creating initial file {path}: {e}")
     return default
 
 def save_json_file(path, data):
@@ -142,11 +142,11 @@ def save_json_file(path, data):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        logging.error(f"Erreur écriture {path}: {e}")
+        logging.error(f"Error writing {path}: {e}")
 
 def send_email_notification(subject: str, body: str):
-    # Stub d'envoi d’e-mail : à remplacer par implémentation pro si nécessaire
-    logging.info(f"[Notification stub] Sujet: {subject} | Corps: {body}")
+    # Stub for email sending: replace with production implementation if necessary
+    logging.info(f"[Notification stub] Subject: {subject} | Body: {body}")
 
 def admin_login_required(f):
     """
